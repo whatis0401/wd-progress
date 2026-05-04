@@ -397,7 +397,7 @@ export default function App(){
           {view==="overview"&&<button onClick={()=>setView("new")} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增專案</button>}
           {view==="detail"&&<button onClick={()=>{setShowAdd(true);setDetailTab("tasks");}} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增任務</button>}
           <div style={{position:"relative"}} ref={funcRef}>
-            <button onClick={()=>setShowFuncMenu(!showFuncMenu)} style={{...bSt(),padding:"6px 10px",fontSize:14}}>⚙</button>
+            <button onClick={()=>setShowFuncMenu(!showFuncMenu)} style={{...bSt(),padding:"6px 10px",fontSize:14}}>⚙&#xFE0E;</button>
             {showFuncMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,minWidth:140,boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:30}}>{[{icon:"🎨",label:"調整配色",action:()=>{setModal("color");setShowFuncMenu(false);}},{icon:"👥",label:"人員管理",action:()=>{setModal("member");setShowFuncMenu(false);}},{icon:"🔄",label:"重新整理",action:()=>{loadAll();setShowFuncMenu(false);}}].map(item=>(<button key={item.label} onClick={item.action} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 14px",background:"none",border:"none",color:C.inkMid,cursor:"pointer",fontSize:12,textAlign:"left",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span>{item.icon}</span><span>{item.label}</span></button>))}</div>)}
           </div>
         </div>
