@@ -34,7 +34,7 @@ function rowsToProjects(pRows, tRows, rRows) {
     start:    r[5] || "",
     end:      r[6] || "",
     members:  r[7] ? r[7].split(",").map(s=>s.trim()) : [],
-    archived: r[8] === "TRUE",
+    archived: r[8] === "TRUE" || r[8] === true,
     tasks:    tasks.filter(t => t.projectId === r[0]),
     repairs:  repairs.filter(rep => rep.projectId === r[0]),
   }));
@@ -47,7 +47,7 @@ function rowsToTasks(rows) {
     name:      r[2] || "",
     owner:     r[3] || "",
     due:       r[4] || "",
-    done:      r[5] === "TRUE",
+    done:      r[5] === "TRUE" || r[5] === true,
     note:      r[6] || "",
   }));
 }
@@ -63,7 +63,7 @@ function rowsToRepairs(rows) {
 }
 
 function rowsToMembers(rows) {
-  return rows.slice(1).filter(r => r[0] && r[1] === "TRUE").map(r => r[0]);
+  return rows.slice(1).filter(r => r[0] && (r[1] === "TRUE" || r[1] === true)).map(r => r[0]);
 }
 
 // 把所有任務攤平成 rows（含 header）
