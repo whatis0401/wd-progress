@@ -31,8 +31,8 @@ function rowsToProjects(pRows, tRows, rRows) {
     type:     r[2] || "室內",
     status:   r[3] || "規劃中",
     client:   r[4] || "",
-    start:    r[5] || "",
-    end:      r[6] || "",
+    start:    r[5] ? r[5].toString().slice(0,10) : "",
+    end:      r[6] ? r[6].toString().slice(0,10) : "",
     members:  r[7] ? r[7].split(",").map(s=>s.trim()) : [],
     archived: r[8] === "TRUE" || r[8] === true,
     tasks:    tasks.filter(t => t.projectId === r[0]),
@@ -46,7 +46,7 @@ function rowsToTasks(rows) {
     projectId: r[1] || "",
     name:      r[2] || "",
     owner:     r[3] || "",
-    due:       r[4] || "",
+    due:       r[4] ? r[4].toString().slice(0,10) : "",
     done:      r[5] === "TRUE" || r[5] === true,
     note:      r[6] || "",
   }));
@@ -121,7 +121,7 @@ const INIT  = n => n[0];
 const pct      = t => !t.length?0:Math.round(t.filter(x=>x.done).length/t.length*100);
 const daysLeft = e => Math.ceil((new Date(e)-new Date())/86400000);
 const typeTag  = t => t==="建築"?"A":"I";
-const fmt      = s => s?s.replace(/-/g,"/"):"—";
+const fmt      = s => { if(!s) return "—"; const d = s.toString().slice(0,10); return d.replace(/-/g,"/"); };
 const isPayment= n => n.includes("請款");
 
 function hexToRgb(h){return{r:parseInt(h.slice(1,3),16),g:parseInt(h.slice(3,5),16),b:parseInt(h.slice(5,7),16)};}
