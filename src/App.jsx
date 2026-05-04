@@ -1,37 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── Google Sheets 設定 ───────────────────────────────────────
-const API_KEY   = "AIzaSyBmCa9aEzDNlrSZahYzfWj40V9lxbqL3Xc";
-const SHEET_ID  = "1uE6tCpR6dOPoWxgdP8yw1mHc58V2nMANRI7pEMzujAg";
-const BASE      = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+// ─── Apps Script API 設定 ────────────────────────────────────
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwsiomxJ5rB8dVRciy8OGmU6b0R6dunX8mnXWDwgzhVgwytTu6mOu6DbeBVYC7CRc2tTw/exec";
 
 // 讀取工作表
-async function sheetGet(range) {
-  const res = await fetch(`${BASE}/values/${range}?key=${API_KEY}`);
-  if (!res.ok) throw new Error(`Sheets read error: ${res.status}`);
-  const data = await res.json();
-  return data.values || [];
-}
-
-// 寫入（覆蓋整個範圍）
-async function sheetPut(range, values) {
-  const res = await fetch(
-    `${BASE}/values/${range}?valueInputOption=RAW&key=${API_KEY}`,
-    { method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ range, majorDimension: "ROWS", values }) }
-  );
-  if (!res.ok) throw new Error(`Sheets write error: ${res.status}`);
+async function sheetGet(sheetName) {
+  const res = await fetch(`${GAS_URL}?sheet=${encodeURIComponent(sheetName)}`);
+  if (!res.ok) throw new Error(`Read error: ${res.status}`);
   return res.json();
 }
 
-// 附加一列
-async function sheetAppend(range, values) {
-  const res = await fetch(
-    `${BASE}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS&key=${API_KEY}`,
-    { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ range, majorDimension: "ROWS", values }) }
-  );
-  if (!res.ok) throw new Error(`Sheets append error: ${res.status}`);
+// 寫入工作表
+async function sheetPut(sheetName, values) {
+  const res = await fetch(GAS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ sheet: sheetName, values }),
+  });
+  if (!res.ok) throw new Error(`Write error: ${res.status}`);
   return res.json();
 }
 
@@ -285,10 +271,10 @@ export default function App(){
     setLoading(true);
     try{
       const[pRows,tRows,rRows,mRows]=await Promise.all([
-        sheetGet("Projects!A:I"),
-        sheetGet("Tasks!A:G"),
-        sheetGet("Repairs!A:E"),
-        sheetGet("Members!A:B"),
+        sheetGet("Projects"),
+        sheetGet("Tasks"),
+        sheetGet("Repairs"),
+        sheetGet("Members"),
       ]);
       setMembers(rowsToMembers(mRows));
       setProjects(rowsToProjects(pRows,tRows,rRows));
@@ -306,10 +292,10 @@ export default function App(){
       setSaving(true);setSaveError(false);
       try{
         await Promise.all([
-          sheetPut("Projects!A1",projectsToRows(updatedProjects||projects)),
-          sheetPut("Tasks!A1",tasksToRows(updatedProjects||projects)),
-          sheetPut("Repairs!A1",repairsToRows(updatedProjects||projects)),
-          ...(updatedMembers?[sheetPut("Members!A1",membersToRows(updatedMembers))]:[] ),
+          sheetPut("Projects",projectsToRows(updatedProjects||projects)),
+          sheetPut("Tasks",tasksToRows(updatedProjects||projects)),
+          sheetPut("Repairs",repairsToRows(updatedProjects||projects)),
+          ...(updatedMembers?[sheetPut("Members",membersToRows(updatedMembers))]:[] ),
         ]);
       }catch(e){console.error(e);setSaveError(true);setTimeout(()=>setSaveError(false),4000);}
       finally{setSaving(false);}
