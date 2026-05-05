@@ -191,10 +191,14 @@ function MilestonePanel({milestones,onChange}){
 }
 
 // ─── TaskDetail Modal ─────────────────────────────────────────
-function TaskDetailModal({task,onClose,onUpdate,members}){
+function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
   const[newSub,setNewSub]=useState("");
   const[editSubId,setEditSubId]=useState(null);
   const[editSubName,setEditSubName]=useState("");
+  const subDragRef=useRef(null);
+  const subDragOverRef=useRef(null);
+  const[subDraggingId,setSubDraggingId]=useState(null);
+  const[subDragOverId,setSubDragOverId]=useState(null);
 
   function addSub(){
     if(!newSub.trim())return;
@@ -231,7 +235,13 @@ function TaskDetailModal({task,onClose,onUpdate,members}){
       <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>子任務</div>
       <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:12}}>
         {[...(task.subtasks||[]).filter(s=>!s.done),...(task.subtasks||[]).filter(s=>s.done)].map(s=>(
-          <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,opacity:s.done?0.5:1}}>
+          <div key={s.id}
+            draggable
+            onDragStart={()=>{subDragRef.current=s.id;setSubDraggingId(s.id);}}
+            onDragOver={e=>{e.preventDefault();subDragOverRef.current=s.id;setSubDragOverId(s.id);}}
+            onDragEnd={()=>{setSubDraggingId(null);setSubDragOverId(null);subDragRef.current=null;subDragOverRef.current=null;}}
+            onDrop={()=>{if(subDragRef.current&&subDragOverRef.current&&subDragRef.current!==subDragOverRef.current){onReorderSub&&onReorderSub(subDragRef.current,subDragOverRef.current);}setSubDraggingId(null);setSubDragOverId(null);subDragRef.current=null;subDragOverRef.current=null;}}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:C.bg,border:`1px solid ${subDragOverId===s.id&&subDraggingId!==s.id?C.accent:C.border}`,borderRadius:4,opacity:subDraggingId===s.id?0.3:s.done?0.5:1,transition:"opacity 0.15s, border-color 0.15s, transform 0.15s",boxShadow:subDragOverId===s.id&&subDraggingId!==s.id?"0 0 0 2px "+C.accent+"44":"none",cursor:"grab",transform:subDragOverId===s.id&&subDraggingId!==s.id?"translateY(-2px)":"none"}}>
             <div onClick={()=>toggleSub(s.id)} style={{width:14,height:14,border:`1.5px solid ${s.done?C.ok:C.border}`,borderRadius:3,cursor:"pointer",background:s.done?C.ok:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               {s.done&&<span style={{fontSize:9,color:"#e8e8e8"}}>✓</span>}
             </div>
@@ -447,6 +457,37 @@ export default function App(){
   function updateTaskDetail(pid,updated){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===updated.id?updated:t)}:p));}
   function addRepair(pid){if(!newRepair.desc)return;updateProjects(projects.map(p=>p.id===pid?{...p,repairs:[...(p.repairs||[]),{id:Date.now(),desc:newRepair.desc,note:newRepair.note,status:"待安排"}]}:p));setNewRepair({desc:"",note:""});setShowAddRepair(false);}
   function updateMilestones(pid,ms){updateProjects(projects.map(p=>p.id===pid?{...p,milestones:ms}:p));}
+  function reorderTasks(pid, fromId, toId){
+    setProjects(projects.map(p=>{
+      if(p.id!==pid)return p;
+      const tasks=[...p.tasks];
+      const fromIdx=tasks.findIndex(t=>t.id===fromId);
+      const toIdx=tasks.findIndex(t=>t.id===toId);
+      if(fromIdx===-1||toIdx===-1)return p;
+      const[moved]=tasks.splice(fromIdx,1);
+      tasks.splice(toIdx,0,moved);
+      return{...p,tasks};
+    }));
+  }
+
+  function reorderSubtasks(pid, tid, fromId, toId){
+    const next=projects.map(p=>{
+      if(p.id!==pid)return p;
+      return{...p,tasks:p.tasks.map(t=>{
+        if(t.id!==tid)return t;
+        const subs=[...(t.subtasks||[])];
+        const fromIdx=subs.findIndex(s=>s.id===fromId);
+        const toIdx=subs.findIndex(s=>s.id===toId);
+        if(fromIdx===-1||toIdx===-1)return t;
+        const[moved]=subs.splice(fromIdx,1);
+        subs.splice(toIdx,0,moved);
+        return{...t,subtasks:subs};
+      })};
+    });
+    setProjects(next);
+    scheduleSave(next,null,null);
+  }
+
   function archiveProject(pid){updateProjects(projects.map(p=>p.id===pid?{...p,archived:true,status:"完成"}:p));goBack();}
   function saveEditInfo(pid,f){updateProjects(projects.map(p=>p.id===pid?{...p,...f}:p));setShowEditInfo(false);}
   function saveTemplate(name){
@@ -493,7 +534,7 @@ export default function App(){
       {modal==="overdue"&&<OverdueModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="payment"&&<PaymentModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="repair"&&<RepairModal projects={activeProjects} onClose={()=>setModal(null)} onUpdate={updateRepair}/>}
-      {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members}/>}
+      {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members} onReorderSub={(fId,tId)=>{reorderSubtasks(proj.id,taskDetail.id,fId,tId);const updated=projects.find(p=>p.id===proj.id)?.tasks.find(t=>t.id===taskDetail.id);if(updated)setTaskDetail({...updated});}} />}
       {showAdminLogin&&(
         <Modal title="管理員登入" onClose={()=>{setShowAdminLogin(false);setAdminPwInput("");setAdminPwError(false);}}>
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -626,11 +667,11 @@ export default function App(){
                         <span style={{transition:"transform 0.2s",display:"inline-block",transform:collapsedCats[cat]?"rotate(-90deg)":"rotate(0deg)"}}>▾</span>
                         {cat}（{catTasks.filter(t=>t.done).length}/{catTasks.length}）
                       </button>
-                      {!collapsedCats[cat]&&<TaskList tasks={catTasks} proj={proj} members={members} editTask={editTask} confirmDel={confirmDel} setEditTask={setEditTask} setConfirmDel={setConfirmDel} toggle={toggle} delTask={delTask} saveEdit={saveEdit} setTaskDetail={setTaskDetail}/>}
+                      {!collapsedCats[cat]&&<TaskList tasks={catTasks} proj={proj} members={members} editTask={editTask} confirmDel={confirmDel} setEditTask={setEditTask} setConfirmDel={setConfirmDel} toggle={toggle} delTask={delTask} saveEdit={saveEdit} setTaskDetail={setTaskDetail} onReorder={(fId,tId)=>reorderTasks(proj.id,fId,tId)}/>}
                     </div>
                   );
                 })
-              : <TaskList tasks={filteredTasks} proj={proj} members={members} editTask={editTask} confirmDel={confirmDel} setEditTask={setEditTask} setConfirmDel={setConfirmDel} toggle={toggle} delTask={delTask} saveEdit={saveEdit} setTaskDetail={setTaskDetail}/>
+              : <TaskList tasks={filteredTasks} proj={proj} members={members} editTask={editTask} confirmDel={confirmDel} setEditTask={setEditTask} setConfirmDel={setConfirmDel} toggle={toggle} delTask={delTask} saveEdit={saveEdit} setTaskDetail={setTaskDetail} onReorder={(fId,tId)=>reorderTasks(proj.id,fId,tId)}/>
             }
             {proj.tasks.length===0&&<div style={{padding:"32px",textAlign:"center",color:C.inkFaint,fontSize:12}}>尚無任務</div>}
           </div>)}
@@ -676,8 +717,12 @@ export default function App(){
 }
 
 // ─── TaskList 子元件 ──────────────────────────────────────────
-function TaskList({tasks,proj,members,editTask,confirmDel,setEditTask,setConfirmDel,toggle,delTask,saveEdit,setTaskDetail}){
+function TaskList({tasks,proj,members,editTask,confirmDel,setEditTask,setConfirmDel,toggle,delTask,saveEdit,setTaskDetail,onReorder}){
   const sortedTasks=[...tasks.filter(t=>!t.done),...tasks.filter(t=>t.done)];
+  const dragRef=useRef(null);
+  const dragOverRef=useRef(null);
+  const[draggingId,setDraggingId]=useState(null);
+  const[dragOverId,setDragOverId]=useState(null);
   return(
     <div style={{display:"flex",flexDirection:"column",gap:4}}>
       {sortedTasks.map(t=>{
@@ -687,7 +732,13 @@ function TaskList({tasks,proj,members,editTask,confirmDel,setEditTask,setConfirm
         const subTotal=(t.subtasks||[]).length;
         if(editTask===t.id)return<EditTaskRow key={t.id} task={t} onSave={u=>saveEdit(proj.id,t.id,u)} onCancel={()=>setEditTask(null)} members={members}/>;
         return(
-          <div key={t.id} style={{padding:"10px 13px",background:C.bgRaised,border:`1px solid ${isPay?"#A07060":C.border}`,borderRadius:5,opacity:t.done?0.5:1,transition:"opacity 0.2s",boxShadow:"0 1px 2px rgba(0,0,0,0.05)"}}>
+          <div key={t.id}
+          draggable
+          onDragStart={()=>{dragRef.current=t.id;setDraggingId(t.id);}}
+          onDragOver={e=>{e.preventDefault();dragOverRef.current=t.id;setDragOverId(t.id);}}
+          onDragEnd={()=>{setDraggingId(null);setDragOverId(null);dragRef.current=null;dragOverRef.current=null;}}
+          onDrop={()=>{if(dragRef.current&&dragOverRef.current&&dragRef.current!==dragOverRef.current){onReorder&&onReorder(dragRef.current,dragOverRef.current);}setDraggingId(null);setDragOverId(null);dragRef.current=null;dragOverRef.current=null;}}
+          style={{padding:"10px 13px",background:C.bgRaised,border:`1px solid ${dragOverId===t.id&&draggingId!==t.id?C.accent:isPay?"#A07060":C.border}`,borderRadius:5,opacity:draggingId===t.id?0.3:t.done?0.5:1,transition:"opacity 0.15s, border-color 0.15s, transform 0.15s",boxShadow:dragOverId===t.id&&draggingId!==t.id?"0 0 0 2px "+C.accent+"44":"0 1px 2px rgba(0,0,0,0.05)",cursor:"grab",transform:dragOverId===t.id&&draggingId!==t.id?"translateY(-2px)":"none"}}>
             <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:subTotal>0?5:0}}>
               <div onClick={()=>toggle(proj.id,t.id)} style={{width:15,height:15,border:`1.5px solid ${t.done?C.ok:C.border}`,borderRadius:3,cursor:"pointer",background:t.done?C.ok:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                 {t.done&&<span style={{fontSize:9,color:"#e8e8e8"}}>✓</span>}
