@@ -476,6 +476,7 @@ export default function App(){
           {view==="detail"&&proj&&<StatusBadge status={proj.status}/>}
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <button onClick={()=>window.open(window.location.href,"wd-float","width=420,height=640,resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no")} style={{background:"none",border:"none",color:C.inkMid,cursor:"pointer",padding:"6px 8px",fontSize:14,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}} title="開啟小視窗">📌&#xFE0E;</button>
           {view!=="overview"&&<button onClick={goBack} style={bSt()}>← 返回</button>}
           {view==="overview"&&<button onClick={()=>setView("new")} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增專案</button>}
           {view==="detail"&&<button onClick={()=>{setShowAdd(true);setDetailTab("tasks");}} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增任務</button>}
