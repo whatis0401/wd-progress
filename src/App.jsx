@@ -27,6 +27,7 @@ function rowsToTasks(rows){
     id:Number(r[0]), projectId:r[1]||"", name:r[2]||"", owner:r[3]||"",
     due:sliceDate(r[4]), done:r[5]==="TRUE"||r[5]===true, note:r[6]||"",
     category:r[7]||"設計", subtasks:r[8]?JSON.parse(r[8]):[],
+    updatedAt:r[9]||"",
   }));
 }
 function rowsToRepairs(rows){
@@ -42,8 +43,8 @@ function projectsToRows(projects){
   return[h,...projects.map(p=>[p.id,p.name,p.type,p.status,p.client||"",p.start,p.end,(p.members||[]).join(","),p.archived?"TRUE":"FALSE",p.clientDetail||"",JSON.stringify(p.milestones||{}),p.template||""])];
 }
 function tasksToRows(projects){
-  const h=["id","projectId","name","owner","due","done","note","category","subtasks"];
-  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,t.owner,t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[])]))];
+  const h=["id","projectId","name","owner","due","done","note","category","subtasks","updatedAt"];
+  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,t.owner,t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[]),t.updatedAt||""]))];
 }
 function repairsToRows(projects){
   const h=["id","projectId","desc","status","note"];
@@ -384,6 +385,7 @@ export default function App(){
   const[mounted,setMounted]=useState(false);
   const[confirmDel,setConfirmDel]=useState(null);
   const[confirmDeleteProject,setConfirmDeleteProject]=useState(null);
+  const[conflict,setConflict]=useState(null); // {pid, tid, local, remote}
   const[modal,setModal]=useState(null);
   const[showFuncMenu,setShowFuncMenu]=useState(false);
   const[showArchive,setShowArchive]=useState(false);
@@ -405,6 +407,14 @@ export default function App(){
   useEffect(()=>{function h(e){if(funcRef.current&&!funcRef.current.contains(e.target))setShowFuncMenu(false);}document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
   useEffect(()=>{loadAll();},[]);
 
+  // 每 2 分鐘自動重新整理，確保多人操作時資料同步
+  useEffect(()=>{
+    const timer=setInterval(()=>{
+      if(!saving)loadAll();
+    },120000);
+    return()=>clearInterval(timer);
+  },[saving]);
+
   async function loadAll(){
     setLoading(true);
     try{
@@ -422,7 +432,53 @@ export default function App(){
       setSaving(true);setSaveError(false);
       try{
         const curP=ps||projects,curM=ms||members,curT=tms||templates;
-        await Promise.all([sheetPut("Projects",projectsToRows(curP)),sheetPut("Tasks",tasksToRows(curP)),sheetPut("Repairs",repairsToRows(curP)),...(ms?[sheetPut("Members",membersToRows(curM))]:[]),...(tms?[sheetPut("Templates",templatesToRows(curT))]:[])]);
+
+        // 先讀取 Sheets 最新資料，合併後再寫回（避免多人同時操作覆蓋）
+        const[latestPRows,latestTRows,latestRRows]=await Promise.all([
+          sheetGet("Projects"),sheetGet("Tasks"),sheetGet("Repairs")
+        ]);
+        const latestProjects=rowsToProjects(latestPRows,latestTRows,latestRRows);
+
+        // 衝突偵測：比對每個任務的 updatedAt
+        const conflicts=[];
+        const mergedProjects=curP.map(localP=>{
+          const remoteP=latestProjects.find(p=>p.id===localP.id);
+          if(!remoteP)return localP;
+          const mergedTasks=localP.tasks.map(localT=>{
+            const remoteT=remoteP.tasks.find(t=>t.id===localT.id);
+            if(!remoteT)return localT;
+            // 若遠端比本地新，且本地有修改（updatedAt 不同）→ 衝突
+            if(remoteT.updatedAt&&localT.updatedAt&&
+               remoteT.updatedAt>localT.updatedAt&&
+               remoteT.updatedAt!==localT.updatedAt){
+              conflicts.push({pid:localP.id,projName:localP.name,tid:localT.id,local:localT,remote:remoteT});
+              return remoteT; // 暫時以遠端為主，讓使用者決定
+            }
+            return localT;
+          });
+          return{...localP,tasks:mergedTasks};
+        });
+
+        // 保留遠端新增的專案
+        const localIds=new Set(curP.map(p=>p.id));
+        const remoteOnlyProjects=latestProjects.filter(p=>!localIds.has(p.id));
+        const finalProjects=[...mergedProjects,...remoteOnlyProjects];
+
+        await Promise.all([
+          sheetPut("Projects",projectsToRows(finalProjects)),
+          sheetPut("Tasks",tasksToRows(finalProjects)),
+          sheetPut("Repairs",repairsToRows(finalProjects)),
+          ...(ms?[sheetPut("Members",membersToRows(curM))]:[]),
+          ...(tms?[sheetPut("Templates",templatesToRows(curT))]:[]),
+        ]);
+
+        // 更新本地 state
+        setProjects(finalProjects);
+
+        // 如果有衝突，顯示第一個衝突給使用者處理
+        if(conflicts.length>0){
+          setConflict(conflicts[0]);
+        }
       }catch(e){console.error(e);setSaveError(true);setTimeout(()=>setSaveError(false),4000);}
       finally{setSaving(false);}
     },1500);
@@ -447,13 +503,14 @@ export default function App(){
 
   function addTask(pid){
     if(!newTask.name)return;
-    const next=projects.map(p=>p.id===pid?{...p,tasks:[...p.tasks,{id:Date.now(),...newTask,done:false,subtasks:[]}]}:p);
+    const now=new Date().toISOString();
+    const next=projects.map(p=>p.id===pid?{...p,tasks:[...p.tasks,{id:Date.now(),...newTask,done:false,subtasks:[],updatedAt:now}]}:p);
     updateProjects(next);setNewTask({name:"",owner:members[0]||"",due:"",note:"",category:"設計"});setShowAdd(false);
   }
 
-  function toggle(pid,tid){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,done:!t.done}:t)}:p));}
+  function toggle(pid,tid){const now=new Date().toISOString();updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,done:!t.done,updatedAt:now}:t)}:p));}
   function delTask(pid,tid){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.filter(t=>t.id!==tid)}:p));setConfirmDel(null);}
-  function saveEdit(pid,tid,u){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,...u}:t)}:p));setEditTask(null);}
+  function saveEdit(pid,tid,u){const now=new Date().toISOString();updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,...u,updatedAt:now}:t)}:p));setEditTask(null);}
   function updateTaskDetail(pid,updated){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===updated.id?updated:t)}:p));}
   function addRepair(pid){if(!newRepair.desc)return;updateProjects(projects.map(p=>p.id===pid?{...p,repairs:[...(p.repairs||[]),{id:Date.now(),desc:newRepair.desc,note:newRepair.note,status:"待安排"}]}:p));setNewRepair({desc:"",note:""});setShowAddRepair(false);}
   function updateMilestones(pid,ms){updateProjects(projects.map(p=>p.id===pid?{...p,milestones:ms}:p));}
@@ -535,6 +592,54 @@ export default function App(){
       {modal==="payment"&&<PaymentModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="repair"&&<RepairModal projects={activeProjects} onClose={()=>setModal(null)} onUpdate={updateRepair}/>}
       {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members} onReorderSub={(fId,tId)=>{reorderSubtasks(proj.id,taskDetail.id,fId,tId);const updated=projects.find(p=>p.id===proj.id)?.tasks.find(t=>t.id===taskDetail.id);if(updated)setTaskDetail({...updated});}} />}
+      {/* 衝突解決 Modal */}
+      {conflict&&(
+        <Modal title="⚠️ 任務內容衝突" onClose={()=>setConflict(null)} wide>
+          <div style={{fontSize:12,color:C.inkSoft,marginBottom:16}}>
+            「{conflict.projName}」的任務「{conflict.local.name}」已被其他人修改，請選擇要保留哪個版本：
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+            {/* 本地版本 */}
+            <div style={{background:C.bgSunk,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 14px"}}>
+              <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>你的版本</div>
+              {[["任務名稱",conflict.local.name],["負責人",conflict.local.owner],["期限",conflict.local.due||"—"],["備註",conflict.local.note||"—"],["狀態",conflict.local.done?"完成":"進行中"]].map(([l,v])=>(
+                <div key={l} style={{marginBottom:5}}>
+                  <span style={{fontSize:10,color:C.inkFaint}}>{l}：</span>
+                  <span style={{fontSize:11,color:C.ink}}>{v}</span>
+                </div>
+              ))}
+              <div style={{fontSize:9,color:C.inkFaint,marginTop:8}}>修改時間：{conflict.local.updatedAt?new Date(conflict.local.updatedAt).toLocaleString("zh-TW"):"—"}</div>
+            </div>
+            {/* 遠端版本 */}
+            <div style={{background:C.bgSunk,border:`1px solid ${C.accent}`,borderRadius:6,padding:"12px 14px"}}>
+              <div style={{fontSize:10,color:C.accent,letterSpacing:"0.12em",marginBottom:8}}>對方的版本</div>
+              {[["任務名稱",conflict.remote.name],["負責人",conflict.remote.owner],["期限",conflict.remote.due||"—"],["備註",conflict.remote.note||"—"],["狀態",conflict.remote.done?"完成":"進行中"]].map(([l,v])=>(
+                <div key={l} style={{marginBottom:5}}>
+                  <span style={{fontSize:10,color:C.inkFaint}}>{l}：</span>
+                  <span style={{fontSize:11,color:C.ink}}>{v}</span>
+                </div>
+              ))}
+              <div style={{fontSize:9,color:C.inkFaint,marginTop:8}}>修改時間：{conflict.remote.updatedAt?new Date(conflict.remote.updatedAt).toLocaleString("zh-TW"):"—"}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>{
+              // 保留我的版本
+              const now=new Date().toISOString();
+              const resolved={...conflict.local,updatedAt:now};
+              const next=projects.map(p=>p.id===conflict.pid?{...p,tasks:p.tasks.map(t=>t.id===conflict.tid?resolved:t)}:p);
+              updateProjects(next);
+              setConflict(null);
+            }} style={bSt()}>保留我的版本</button>
+            <button onClick={()=>{
+              // 接受對方版本
+              const next=projects.map(p=>p.id===conflict.pid?{...p,tasks:p.tasks.map(t=>t.id===conflict.tid?conflict.remote:t)}:p);
+              setProjects(next);
+              setConflict(null);
+            }} style={bSt(C.accent,C.accent,C.accentText)}>接受對方版本</button>
+          </div>
+        </Modal>
+      )}
       {showAdminLogin&&(
         <Modal title="管理員登入" onClose={()=>{setShowAdminLogin(false);setAdminPwInput("");setAdminPwError(false);}}>
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
