@@ -660,15 +660,15 @@ export default function App(){
       {showTemplate&&proj&&<TemplateModal proj={proj} templates={templates} onClose={()=>setShowTemplate(false)} onSaveTemplate={saveTemplate} onApplyTemplate={applyTemplate}/>}
 
       {/* Header */}
-      <header style={{background:C.bgSunk,borderBottom:`1px solid ${C.border}`,padding:"0 16px",height:52,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:20}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:11,letterSpacing:"0.15em",color:C.inkSoft,fontWeight:500}}>whatis Design</span>
-          <span style={{color:C.border,fontSize:16,fontWeight:100}}>|</span>
-          <span style={{fontSize:12,color:C.inkMid,letterSpacing:"0.05em"}}>{view==="overview"?"專案進度總表":view==="new"?"新增專案":proj?.name}</span>
-          {view==="detail"&&proj&&<StatusBadge status={proj.status}/>}
-          {isAdmin&&<span style={{fontSize:9,color:C.warn,border:`1px solid ${C.warn}`,padding:"2px 7px",borderRadius:2,letterSpacing:"0.08em"}}>管理員</span>}
+      <header style={{background:C.bgSunk,borderBottom:`1px solid ${C.border}`,padding:"0 12px",height:52,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:20,gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+          <span style={{fontSize:10,letterSpacing:"0.12em",color:C.inkSoft,fontWeight:500,flexShrink:0}}>whatis</span>
+          <span style={{color:C.border,fontSize:14,fontWeight:100,flexShrink:0}}>|</span>
+          <span style={{fontSize:12,color:C.inkMid,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}}>{view==="overview"?"專案進度總表":view==="new"?"新增專案":proj?.name}</span>
+          {view==="detail"&&proj&&<span style={{flexShrink:0}}><StatusBadge status={proj.status}/></span>}
+          {isAdmin&&<span style={{fontSize:9,color:C.warn,border:`1px solid ${C.warn}`,padding:"2px 6px",borderRadius:2,letterSpacing:"0.06em",flexShrink:0}}>管理員</span>}
         </div>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
           {view!=="overview"&&<button onClick={goBack} style={bSt()}>← 返回</button>}
           {view==="overview"&&<button onClick={()=>setView("new")} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增專案</button>}
           {view==="detail"&&<button onClick={()=>{setShowAdd(true);setDetailTab("tasks");}} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增任務</button>}
