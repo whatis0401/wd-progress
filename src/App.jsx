@@ -80,7 +80,7 @@ const SHORT=n=>(n&&n.length>1)?n.slice(1):n||"?";
 const INIT=n=>(n&&n.length>0)?n[0]:"?";
 
 const pct=t=>!t.length?0:Math.round(t.filter(x=>x.done).length/t.length*100);
-const daysLeft=e=>Math.ceil((new Date(e)-new Date())/86400000);
+const daysLeft=e=>{if(!e)return 0;const d=Math.ceil((new Date(e)-new Date())/86400000);return isNaN(d)?0:d;};
 const typeTag=t=>t==="建築"?"A":"I";
 const fmt=s=>{if(!s)return"—";return s.toString().slice(0,10).replace(/-/g,"/");};
 const isPayment=n=>n.includes("請款");
@@ -89,7 +89,7 @@ function rgbToHex(r,g,b){return`#${[r,g,b].map(v=>Math.round(v).toString(16).pad
 function rgbToCmyk(r,g,b){r/=255;g/=255;b/=255;const k=1-Math.max(r,g,b);if(k===1)return{c:0,m:0,y:0,k:100};return{c:Math.round((1-r-k)/(1-k)*100),m:Math.round((1-g-k)/(1-k)*100),y:Math.round((1-b-k)/(1-k)*100),k:Math.round(k*100)};}
 function cmykToHex(c,m,y,k){return rgbToHex(255*(1-c/100)*(1-k/100),255*(1-m/100)*(1-k/100),255*(1-y/100)*(1-k/100));}
 function ganttRange(items){const validItems=items.filter(p=>p.start&&p.end);if(!validItems.length){const now=new Date();return{min:now,max:now,days:1};}const ds=validItems.flatMap(p=>[new Date(p.start),new Date(p.end)]).filter(d=>!isNaN(d));if(!ds.length){const now=new Date();return{min:now,max:now,days:1};}const mn=new Date(Math.min(...ds));mn.setDate(1);const mx=new Date(Math.max(...ds));mx.setMonth(mx.getMonth()+1,1);return{min:mn,max:mx,days:Math.max((mx-mn)/86400000,1)};}
-function monthList(s,e){const r=[],c=new Date(s.getFullYear(),s.getMonth(),1);while(c<e){r.push(new Date(c));c.setMonth(c.getMonth()+1);}return r;}
+function monthList(s,e){const r=[],c=new Date(s.getFullYear(),s.getMonth(),1),limit=new Date(e);limit.setMonth(limit.getMonth()+1);while(c<=limit&&r.length<60){r.push(new Date(c));c.setMonth(c.getMonth()+1);}return r.length?r:[new Date(s)];}
 
 // ─── UI 元件 ──────────────────────────────────────────────────
 function Avatar({name,size=20,members}){
@@ -108,9 +108,14 @@ function Field({label,children}){return(<div><div style={{fontSize:9,color:C.ink
 function Modal({title,onClose,children,wide}){
   return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:8,width:"100%",maxWidth:wide?640:480,maxHeight:"88vh",overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,background:C.bgRaised,zIndex:1}}><span style={{fontSize:13,color:C.ink,fontWeight:500}}>{title}</span><button onClick={onClose} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:18,padding:"2px 6px"}}>×</button></div><div style={{padding:"18px 20px"}}>{children}</div></div></div>);
 }
-function SavingBadge({saving,error}){
-  if(!saving&&!error)return null;
-  return(<div style={{position:"fixed",bottom:16,right:16,padding:"8px 14px",background:error?C.warn:C.accent,color:C.accentText,borderRadius:4,fontSize:11,zIndex:50,boxShadow:"0 2px 8px rgba(0,0,0,0.2)"}}>{error?"儲存失敗":"儲存中…"}</div>);
+function SavingBadge({saving,error,syncing}){
+  if(!saving&&!error&&!syncing)return null;
+  return(
+    <div style={{position:"fixed",bottom:16,right:16,padding:"7px 12px",background:error?C.warn:C.accent,color:C.accentText,borderRadius:4,fontSize:11,zIndex:50,boxShadow:"0 2px 8px rgba(0,0,0,0.2)",display:"flex",alignItems:"center",gap:6}}>
+      {syncing&&!saving&&<span style={{width:6,height:6,borderRadius:"50%",background:C.accentText,opacity:0.7,display:"inline-block"}}/>}
+      {error?"儲存失敗":saving?"儲存中…":"同步中"}
+    </div>
+  );
 }
 function bSt(bg,bd,color){bg=bg||C.bgSunk;bd=bd||C.border;color=color||C.inkMid;return{background:bg,border:`1px solid ${bd}`,color,padding:"6px 14px",borderRadius:4,cursor:"pointer",fontSize:12,letterSpacing:"0.04em",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"};}
 function iSt(extra){return{background:C.bgHover,border:`1px solid ${C.border}`,color:C.ink,padding:"8px 10px",borderRadius:4,fontSize:12,outline:"none",width:"100%",boxSizing:"border-box",minHeight:42,WebkitAppearance:"none",appearance:"none",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif",...extra};}
@@ -375,6 +380,7 @@ export default function App(){
   const[loading,setLoading]=useState(true);
   const[saving,setSaving]=useState(false);
   const[saveError,setSaveError]=useState(false);
+  const[syncing,setSyncing]=useState(false); // 背景同步中
   const[view,setView]=useState("overview");
   const[selected,setSelected]=useState(null);
   const[detailTab,setDetailTab]=useState("tasks");
@@ -407,7 +413,7 @@ export default function App(){
   const saveTimer=useRef(null);
 
   useEffect(()=>{setTimeout(()=>setMounted(true),60);},[]);
-  useEffect(()=>{C=buildColors(colorHex);},[colorHex]);
+  useEffect(()=>{C=buildColors(colorHex);setMounted(m=>!m);setTimeout(()=>setMounted(m=>!m),10);},[colorHex]);
   useEffect(()=>{function h(e){if(funcRef.current&&!funcRef.current.contains(e.target))setShowFuncMenu(false);}document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
   useEffect(()=>{loadAll();},[]);
 
@@ -415,13 +421,14 @@ export default function App(){
   // 只有在沒有待儲存操作時才執行，避免覆蓋剛新增的資料
   useEffect(()=>{
     const timer=setInterval(()=>{
-      if(!saving&&!saveTimer.current)loadAll(true); // 合併模式，不覆蓋本地未儲存資料
+      if(!saving&&!saveTimer.current)loadAll(true,true); // 背景靜默合併更新
     },120000);
     return()=>clearInterval(timer);
   },[saving]);
 
-  async function loadAll(mergeWithLocal=false){
-    if(!mergeWithLocal)setLoading(true);
+  async function loadAll(mergeWithLocal=false,silent=false){
+    if(!mergeWithLocal&&!silent)setLoading(true);
+    if(silent)setSyncing(true);
     try{
       const[pR,tR,rR,mR,tmR]=await Promise.all([sheetGet("Projects"),sheetGet("Tasks"),sheetGet("Repairs"),sheetGet("Members"),sheetGet("Templates").catch(()=>[["name","tasks"]])]);
       const remoteProjects=rowsToProjects(pR,tR,rR);
@@ -454,7 +461,7 @@ export default function App(){
         setProjects(remoteProjects);
       }
     }catch(e){console.error(e);setSaveError(true);setTimeout(()=>setSaveError(false),4000);}
-    finally{setLoading(false);}
+    finally{setLoading(false);setSyncing(false);}
   }
 
   const latestState=useRef({projects,members,templates});
@@ -517,9 +524,9 @@ export default function App(){
           setConflict(conflicts[0]);
         }
       }catch(e){console.error(e);setSaveError(true);setTimeout(()=>setSaveError(false),4000);}
-      finally{setSaving(false);}
+      finally{setSaving(false);saveTimer.current=null;}
     },800);
-  },[projects,members,templates]);
+  },[]);
 
   const proj=selected?projects.find(p=>p.id===selected):null;
 
@@ -533,7 +540,11 @@ export default function App(){
     const yr=new Date().getFullYear().toString().slice(2);
     const n=String(projects.filter(p=>p.type===newProj.type).length+1).padStart(2,"0");
     const autoId=`${newProj.type==="建築"?"A":"I"}_${yr}${n}`;
-    const finalId=editingId&&customId?customId:autoId;
+    const finalId=editingId&&customId.trim()?customId.trim():autoId;
+    // 驗證 ID 不重複
+    if(projects.some(p=>p.id===`WD_${finalId}`)){
+      alert(`案件編號 WD_${finalId} 已存在，請修改`);return;
+    }
     const next=[...projects,{...newProj,id:`WD_${finalId}`,status:"規劃中",tasks:[],repairs:[],archived:false,milestones:{design:defaultDesignMS(),construction:defaultConstructionMS()},template:""}];
     updateProjects(next);setNewProj({name:"",type:"室內",client:"",clientDetail:"",start:"",end:"",members:[]});setCustomId("");setEditingId(false);setView("overview");
   }
@@ -582,6 +593,7 @@ export default function App(){
     });
     setProjects(next);
     scheduleSave(next,null,null);
+    return next;
   }
 
   function archiveProject(pid){updateProjects(projects.map(p=>p.id===pid?{...p,archived:true,status:"完成"}:p));goBack();}
@@ -594,7 +606,7 @@ export default function App(){
   }
   function applyTemplate(tpl){
     if(!proj)return;
-    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[]}));
+    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[],updatedAt:new Date().toISOString()}));
     updateProjects(projects.map(p=>p.id===proj.id?{...p,tasks:[...p.tasks,...newTasks]}:p));
     setShowTemplate(false);
   }
@@ -616,13 +628,13 @@ export default function App(){
 
   // 任務分類篩選
   const filteredTasks=(proj?.tasks||[]).filter(t=>taskCatFilter==="全部"||t.category===taskCatFilter);
-  const groupedTasks=TASK_CATEGORIES.reduce((acc,cat)=>{acc[cat]=filteredTasks.filter(t=>t.category===cat);return acc;},{});
+  // groupedTasks removed (unused)
 
   if(loading)return(<div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10}}><div style={{fontSize:13,color:C.inkSoft,letterSpacing:"0.1em"}}>載入中…</div><div style={{fontSize:10,color:C.inkFaint}}>正在從 Google Sheets 讀取資料</div></div>);
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.ink,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif",display:"flex",flexDirection:"column"}}>
-      <SavingBadge saving={saving} error={saveError}/>
+      <SavingBadge saving={saving} error={saveError} syncing={syncing}/>
 
       {/* Modals */}
       {modal==="color"&&<ColorPanel onClose={()=>setModal(null)} onApply={applyColor} currentHex={colorHex}/>}
@@ -630,7 +642,7 @@ export default function App(){
       {modal==="overdue"&&<OverdueModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="payment"&&<PaymentModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="repair"&&<RepairModal projects={activeProjects} onClose={()=>setModal(null)} onUpdate={updateRepair}/>}
-      {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members} onReorderSub={(fId,tId)=>{reorderSubtasks(proj.id,taskDetail.id,fId,tId);const updated=projects.find(p=>p.id===proj.id)?.tasks.find(t=>t.id===taskDetail.id);if(updated)setTaskDetail({...updated});}} />}
+      {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members} onReorderSub={(fId,tId)=>{const next=reorderSubtasks(proj.id,taskDetail.id,fId,tId);if(next){const updatedP=next.find(p=>p.id===proj.id);const updatedT=updatedP?.tasks.find(t=>t.id===taskDetail.id);if(updatedT)setTaskDetail({...updatedT});}}} />}
       {/* 衝突解決 Modal */}
       {conflict&&(
         <Modal title="⚠️ 任務內容衝突" onClose={()=>setConflict(null)} wide>
@@ -671,9 +683,9 @@ export default function App(){
               setConflict(null);
             }} style={bSt()}>保留我的版本</button>
             <button onClick={()=>{
-              // 接受對方版本
+              // 接受對方版本，寫回 Sheets
               const next=projects.map(p=>p.id===conflict.pid?{...p,tasks:p.tasks.map(t=>t.id===conflict.tid?conflict.remote:t)}:p);
-              setProjects(next);
+              updateProjects(next);
               setConflict(null);
             }} style={bSt(C.accent,C.accent,C.accentText)}>接受對方版本</button>
           </div>
@@ -714,7 +726,7 @@ export default function App(){
           <button onClick={()=>window.open(window.location.href,"wd-float","width=420,height=640,resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no")} style={{background:"none",border:"none",color:C.inkMid,cursor:"pointer",padding:"6px 8px",fontSize:13,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif",letterSpacing:"0.02em"}} title="開啟小視窗">⊞&#xFE0E;</button>
           <div style={{position:"relative"}} ref={funcRef}>
             <button onClick={()=>setShowFuncMenu(!showFuncMenu)} style={{background:"none",border:"none",color:C.inkMid,cursor:"pointer",padding:"6px 10px",fontSize:14,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}>⚙&#xFE0E;</button>
-            {showFuncMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,minWidth:140,boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:30}}>{[{icon:"🎨",label:"調整配色",action:()=>{setModal("color");setShowFuncMenu(false);}},{icon:"👥",label:"人員管理",action:()=>{setModal("member");setShowFuncMenu(false);}},{icon:"🔄",label:"重新整理",action:()=>{loadAll();setShowFuncMenu(false);}},{icon:isAdmin?"🔓":"🔐",label:isAdmin?"登出管理員":"管理員登入",action:()=>{if(isAdmin){setIsAdmin(false);}else{setShowAdminLogin(true);}setShowFuncMenu(false);}}].map(item=>(<button key={item.label} onClick={item.action} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 14px",background:"none",border:"none",color:C.inkMid,cursor:"pointer",fontSize:12,textAlign:"left",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span>{item.icon}</span><span>{item.label}</span></button>))}</div>)}
+            {showFuncMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,minWidth:140,boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:30}}>{[{icon:"🎨",label:"調整配色",action:()=>{setModal("color");setShowFuncMenu(false);}},{icon:"👥",label:"人員管理",action:()=>{setModal("member");setShowFuncMenu(false);}},{icon:"🔄",label:"重新整理",action:()=>{loadAll(true,true);setShowFuncMenu(false);}},{icon:isAdmin?"🔓":"🔐",label:isAdmin?"登出管理員":"管理員登入",action:()=>{if(isAdmin){setIsAdmin(false);}else{setShowAdminLogin(true);}setShowFuncMenu(false);}}].map(item=>(<button key={item.label} onClick={item.action} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 14px",background:"none",border:"none",color:C.inkMid,cursor:"pointer",fontSize:12,textAlign:"left",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span>{item.icon}</span><span>{item.label}</span></button>))}</div>)}
           </div>
         </div>
       </header>
