@@ -71,6 +71,7 @@ let C=buildColors(DEFAULT_HEX);
 
 // ─── 常數 ─────────────────────────────────────────────────────
 const STATUS_LIST=["規劃中","進行中","暫停","完成"];
+const ADMIN_PASSWORD="whatis2601";
 const REPAIR_STATUS=["待安排","已安排","處理中","已完成"];
 const TASK_CATEGORIES=["設計","工程","行政"];
 const SHORT=n=>n.slice(1);
@@ -192,6 +193,9 @@ function MilestonePanel({milestones,onChange}){
 // ─── TaskDetail Modal ─────────────────────────────────────────
 function TaskDetailModal({task,onClose,onUpdate,members}){
   const[newSub,setNewSub]=useState("");
+  const[editSubId,setEditSubId]=useState(null);
+  const[editSubName,setEditSubName]=useState("");
+
   function addSub(){
     if(!newSub.trim())return;
     const subtasks=[...(task.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false}];
@@ -205,6 +209,17 @@ function TaskDetailModal({task,onClose,onUpdate,members}){
     const subtasks=(task.subtasks||[]).filter(s=>s.id!==id);
     onUpdate({...task,subtasks});
   }
+  function startEditSub(s){
+    setEditSubId(s.id);
+    setEditSubName(s.name);
+  }
+  function saveEditSub(id){
+    if(!editSubName.trim())return;
+    const subtasks=(task.subtasks||[]).map(s=>s.id===id?{...s,name:editSubName.trim()}:s);
+    onUpdate({...task,subtasks});
+    setEditSubId(null);setEditSubName("");
+  }
+
   return(
     <Modal title={task.name} onClose={onClose}>
       <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
@@ -220,8 +235,18 @@ function TaskDetailModal({task,onClose,onUpdate,members}){
             <div onClick={()=>toggleSub(s.id)} style={{width:14,height:14,border:`1.5px solid ${s.done?C.ok:C.border}`,borderRadius:3,cursor:"pointer",background:s.done?C.ok:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               {s.done&&<span style={{fontSize:9,color:"#e8e8e8"}}>✓</span>}
             </div>
-            <span style={{flex:1,fontSize:12,color:s.done?C.inkFaint:C.ink,textDecoration:s.done?"line-through":"none"}}>{s.name}</span>
-            <button onClick={()=>delSub(s.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>×</button>
+            {editSubId===s.id
+              ?<input value={editSubName} onChange={e=>setEditSubName(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter")saveEditSub(s.id);if(e.key==="Escape"){setEditSubId(null);}}}
+                  style={{...iSt({flex:1,padding:"3px 7px",fontSize:12})}} autoFocus/>
+              :<span style={{flex:1,fontSize:12,color:s.done?C.inkFaint:C.ink,textDecoration:s.done?"line-through":"none"}}>{s.name}</span>
+            }
+            {editSubId===s.id
+              ?<><button onClick={()=>saveEditSub(s.id)} style={{background:"none",border:"none",color:C.ok,cursor:"pointer",fontSize:13}}>✓</button>
+                <button onClick={()=>setEditSubId(null)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>✕</button></>
+              :<><button onClick={()=>startEditSub(s)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:12,padding:"2px 3px"}}>✎</button>
+                <button onClick={()=>delSub(s.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>×</button></>
+            }
           </div>
         ))}
         {(task.subtasks||[]).length===0&&<div style={{fontSize:11,color:C.inkFaint,textAlign:"center",padding:"12px"}}>尚無子任務</div>}
@@ -348,11 +373,16 @@ export default function App(){
   const[editingId,setEditingId]=useState(false);
   const[mounted,setMounted]=useState(false);
   const[confirmDel,setConfirmDel]=useState(null);
+  const[confirmDeleteProject,setConfirmDeleteProject]=useState(null);
   const[modal,setModal]=useState(null);
   const[showFuncMenu,setShowFuncMenu]=useState(false);
   const[showArchive,setShowArchive]=useState(false);
   const[newRepair,setNewRepair]=useState({desc:"",note:""});
   const[showAddRepair,setShowAddRepair]=useState(false);
+  const[isAdmin,setIsAdmin]=useState(false);
+  const[showAdminLogin,setShowAdminLogin]=useState(false);
+  const[adminPwInput,setAdminPwInput]=useState("");
+  const[adminPwError,setAdminPwError]=useState(false);
   const[taskCatFilter,setTaskCatFilter]=useState("全部");
   const[collapsedCats,setCollapsedCats]=useState({});
   const[showEditInfo,setShowEditInfo]=useState(false);
@@ -464,6 +494,22 @@ export default function App(){
       {modal==="payment"&&<PaymentModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="repair"&&<RepairModal projects={activeProjects} onClose={()=>setModal(null)} onUpdate={updateRepair}/>}
       {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members}/>}
+      {showAdminLogin&&(
+        <Modal title="管理員登入" onClose={()=>{setShowAdminLogin(false);setAdminPwInput("");setAdminPwError(false);}}>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <Field label="請輸入管理員密碼">
+              <input type="password" value={adminPwInput} onChange={e=>{setAdminPwInput(e.target.value);setAdminPwError(false);}}
+                onKeyDown={e=>{if(e.key==="Enter"){if(adminPwInput===ADMIN_PASSWORD){setIsAdmin(true);setShowAdminLogin(false);setAdminPwInput("");}else{setAdminPwError(true);}}}}
+                placeholder="輸入密碼" style={iSt()} autoFocus/>
+            </Field>
+            {adminPwError&&<div style={{fontSize:11,color:C.warn}}>密碼錯誤，請再試一次</div>}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>{setShowAdminLogin(false);setAdminPwInput("");setAdminPwError(false);}} style={bSt()}>取消</button>
+              <button onClick={()=>{if(adminPwInput===ADMIN_PASSWORD){setIsAdmin(true);setShowAdminLogin(false);setAdminPwInput("");}else{setAdminPwError(true);}}} style={bSt(C.accent,C.accent,C.accentText)}>登入</button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {showEditInfo&&proj&&<EditInfoModal proj={proj} onClose={()=>setShowEditInfo(false)} onSave={f=>saveEditInfo(proj.id,f)}/>}
       {showTemplate&&proj&&<TemplateModal proj={proj} templates={templates} onClose={()=>setShowTemplate(false)} onSaveTemplate={saveTemplate} onApplyTemplate={applyTemplate}/>}
 
@@ -474,6 +520,7 @@ export default function App(){
           <span style={{color:C.border,fontSize:16,fontWeight:100}}>|</span>
           <span style={{fontSize:12,color:C.inkMid,letterSpacing:"0.05em"}}>{view==="overview"?"專案進度總表":view==="new"?"新增專案":proj?.name}</span>
           {view==="detail"&&proj&&<StatusBadge status={proj.status}/>}
+          {isAdmin&&<span style={{fontSize:9,color:C.warn,border:`1px solid ${C.warn}`,padding:"2px 7px",borderRadius:2,letterSpacing:"0.08em"}}>管理員</span>}
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           {view!=="overview"&&<button onClick={goBack} style={bSt()}>← 返回</button>}
@@ -482,7 +529,7 @@ export default function App(){
           <button onClick={()=>window.open(window.location.href,"wd-float","width=420,height=640,resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no")} style={{background:"none",border:"none",color:C.inkMid,cursor:"pointer",padding:"6px 8px",fontSize:13,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif",letterSpacing:"0.02em"}} title="開啟小視窗">⊞&#xFE0E;</button>
           <div style={{position:"relative"}} ref={funcRef}>
             <button onClick={()=>setShowFuncMenu(!showFuncMenu)} style={{background:"none",border:"none",color:C.inkMid,cursor:"pointer",padding:"6px 10px",fontSize:14,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}>⚙&#xFE0E;</button>
-            {showFuncMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,minWidth:140,boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:30}}>{[{icon:"🎨",label:"調整配色",action:()=>{setModal("color");setShowFuncMenu(false);}},{icon:"👥",label:"人員管理",action:()=>{setModal("member");setShowFuncMenu(false);}},{icon:"🔄",label:"重新整理",action:()=>{loadAll();setShowFuncMenu(false);}}].map(item=>(<button key={item.label} onClick={item.action} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 14px",background:"none",border:"none",color:C.inkMid,cursor:"pointer",fontSize:12,textAlign:"left",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span>{item.icon}</span><span>{item.label}</span></button>))}</div>)}
+            {showFuncMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,minWidth:140,boxShadow:"0 4px 16px rgba(0,0,0,0.12)",zIndex:30}}>{[{icon:"🎨",label:"調整配色",action:()=>{setModal("color");setShowFuncMenu(false);}},{icon:"👥",label:"人員管理",action:()=>{setModal("member");setShowFuncMenu(false);}},{icon:"🔄",label:"重新整理",action:()=>{loadAll();setShowFuncMenu(false);}},{icon:isAdmin?"🔓":"🔐",label:isAdmin?"登出管理員":"管理員登入",action:()=>{if(isAdmin){setIsAdmin(false);}else{setShowAdminLogin(true);}setShowFuncMenu(false);}}].map(item=>(<button key={item.label} onClick={item.action} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"10px 14px",background:"none",border:"none",color:C.inkMid,cursor:"pointer",fontSize:12,textAlign:"left",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span>{item.icon}</span><span>{item.label}</span></button>))}</div>)}
           </div>
         </div>
       </header>
@@ -499,7 +546,11 @@ export default function App(){
             {activeProjects.map((p,i)=>{const pc=pct(p.tasks);const days=daysLeft(p.end);return(<div key={p.id} onClick={()=>{setSelected(p.id);setView("detail");setDetailTab("tasks");}} style={{padding:"13px 14px",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,0.06)",opacity:mounted?1:0,transform:mounted?"none":"translateY(5px)",transition:`opacity 0.4s ${i*0.06}s, transform 0.4s ${i*0.06}s, background 0.15s`}} onMouseEnter={e=>e.currentTarget.style.background=C.bgHover} onMouseLeave={e=>e.currentTarget.style.background=C.bgRaised}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:20,height:20,borderRadius:3,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.accentText,flexShrink:0}}>{typeTag(p.type)}</span><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{p.id}</span><span style={{fontSize:13,color:C.ink,fontWeight:500,flex:1}}>{p.name}</span><StatusBadge status={p.status}/></div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><div style={{flex:1,height:3,background:C.bgSunk,borderRadius:2}}><div style={{width:`${pc}%`,height:"100%",background:pc===100?C.ok:C.accentMid,borderRadius:2,transition:"width 0.7s"}}/></div><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{pc}%</span><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:10,color:C.inkSoft,flexShrink:0}}>{fmt(p.end)}</span><span style={{fontSize:10,color:days<0?C.warn:days<30?"#7A6A30":C.inkFaint,flexShrink:0}}>{days<0?`逾 ${Math.abs(days)}天`:`剩 ${days}天`}</span></div>{p.members&&p.members.length>0&&(<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.inkFaint,marginRight:2}}>負責</span>{p.members.map((m,mi)=>(<div key={mi} style={{display:"flex",alignItems:"center",gap:3}}><Avatar name={m} size={15} members={members}/><span style={{fontSize:10,color:C.inkSoft}}>{SHORT(m)}</span></div>))}</div>)}</div>);})}
           </div>)}
           {oTab==="gantt"&&<div style={{marginTop:4}}><GanttChart projects={activeProjects} members={members}/></div>}
-          {archivedProjects.length>0&&(<div style={{marginTop:20}}><button onClick={()=>setShowArchive(!showArchive)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:11,padding:"6px 0",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span style={{transition:"transform 0.2s",display:"inline-block",transform:showArchive?"rotate(90deg)":"rotate(0deg)"}}>▶</span>封存案件（{archivedProjects.length}）</button>{showArchive&&(<div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6}}>{archivedProjects.map(p=>(<div key={p.id} style={{padding:"10px 14px",background:C.bgSunk,border:`1px solid ${C.borderLight}`,borderRadius:5,display:"flex",alignItems:"center",gap:8}}><span style={{width:17,height:17,borderRadius:2,background:C.inkFaint,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,color:C.bg}}>{typeTag(p.type)}</span><span style={{fontSize:10,color:C.inkFaint}}>{p.id}</span><span style={{fontSize:12,color:C.inkSoft,flex:1}}>{p.name}</span><span style={{fontSize:10,color:C.inkFaint}}>{fmt(p.end)}</span><button onClick={e=>{e.stopPropagation();updateProjects(projects.map(pp=>pp.id===p.id?{...pp,archived:false,status:"進行中"}:pp));}} style={{...bSt(),padding:"3px 8px",fontSize:10,flexShrink:0}}>恢復</button></div>))}</div>)}</div>)}
+          {archivedProjects.length>0&&(<div style={{marginTop:20}}><button onClick={()=>setShowArchive(!showArchive)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:11,padding:"6px 0",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"}}><span style={{transition:"transform 0.2s",display:"inline-block",transform:showArchive?"rotate(90deg)":"rotate(0deg)"}}>▶</span>封存案件（{archivedProjects.length}）</button>{showArchive&&(<div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6}}>{archivedProjects.map(p=>(<div key={p.id} style={{padding:"10px 14px",background:C.bgSunk,border:`1px solid ${C.borderLight}`,borderRadius:5,display:"flex",alignItems:"center",gap:8}}><span style={{width:17,height:17,borderRadius:2,background:C.inkFaint,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,color:C.bg}}>{typeTag(p.type)}</span><span style={{fontSize:10,color:C.inkFaint}}>{p.id}</span><span style={{fontSize:12,color:C.inkSoft,flex:1}}>{p.name}</span><span style={{fontSize:10,color:C.inkFaint}}>{fmt(p.end)}</span><button onClick={e=>{e.stopPropagation();updateProjects(projects.map(pp=>pp.id===p.id?{...pp,archived:false,status:"進行中"}:pp));}} style={{...bSt(),padding:"3px 8px",fontSize:10,flexShrink:0}}>恢復</button>{isAdmin&&(confirmDeleteProject===p.id
+  ?<><button onClick={e=>{e.stopPropagation();updateProjects(projects.filter(pp=>pp.id!==p.id));setConfirmDeleteProject(null);}} style={{...bSt(),padding:"3px 8px",fontSize:10,flexShrink:0,color:C.warn,borderColor:C.warn}}>確認刪除</button>
+    <button onClick={e=>{e.stopPropagation();setConfirmDeleteProject(null);}} style={{...bSt(),padding:"3px 8px",fontSize:10,flexShrink:0}}>取消</button></>
+  :<button onClick={e=>{e.stopPropagation();setConfirmDeleteProject(p.id);}} style={{...bSt(),padding:"3px 8px",fontSize:10,flexShrink:0,color:C.warn,borderColor:C.warn}}>刪除</button>
+)}</div>))}</div>)}</div>)}
         </div>)}
 
         {/* ══ 詳情 ══ */}
