@@ -362,9 +362,11 @@ function PaymentModal({projects,onClose}){
   const items=projects.flatMap(p=>p.tasks.filter(t=>isPayment(t.name)).map(t=>({proj:p.name,projId:p.id,task:t.name,owner:t.owner,due:t.due,done:t.done})));
   return(<Modal title={`工程請款（${items.filter(i=>!i.done).length} 待處理）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無請款任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${it.done?C.borderLight:C.border}`,borderRadius:5,opacity:it.done?0.55:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500,textDecoration:it.done?"line-through":"none"}}>{it.task}</span><span style={{fontSize:10,color:it.done?C.ok:it.due&&daysLeft(it.due)<0?C.warn:C.inkSoft}}>{it.done?"已完成":it.due?daysLeft(it.due)<0?`逾期 ${Math.abs(daysLeft(it.due))}天`:`剩 ${daysLeft(it.due)}天`:""}</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{it.owner}</span>{it.due&&<span>{fmt(it.due)}</span>}</div></div>))}</div>}</Modal>);
 }
-function RepairModal({projects,onClose,onUpdate}){
-  const items=projects.flatMap(p=>(p.repairs||[]).map(r=>({...r,proj:p.name,projId:p.id})));
-  return(<Modal title={`修繕案件（${items.filter(i=>i.status!=="已完成").length} 進行中）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無修繕記錄</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:it.note?5:0}}><div><div style={{fontSize:12,color:C.ink,fontWeight:500,marginBottom:2}}>{it.desc}</div><div style={{fontSize:11,color:C.inkSoft}}>{it.projId}·{it.proj}</div></div><select value={it.status} onChange={e=>onUpdate(it.projId,it.id,e.target.value)} style={{...sSt({width:"auto",padding:"4px 8px",fontSize:11})}}>{REPAIR_STATUS.map(s=><option key={s}>{s}</option>)}</select></div>{it.note&&<div style={{fontSize:11,color:C.inkFaint,padding:"5px 8px",background:C.bgSunk,borderRadius:3,marginTop:5}}>{it.note}</div>}</div>))}</div>}</Modal>);
+function RepairModal({projects,customRepairs,onClose,onUpdate}){
+  const projectItems=projects.flatMap(p=>(p.repairs||[]).map(r=>({...r,proj:p.name,projId:p.id})));
+  const customItems=(customRepairs||[]).map(r=>({...r,proj:r.customProjectName||"手動輸入案件",projId:"__custom__"}));
+  const items=[...projectItems,...customItems].filter(i=>i.status!=="已完成");
+  return(<Modal title={`修繕進行（${items.length}）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無修繕記錄</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:it.note?5:0}}><div><div style={{fontSize:12,color:C.ink,fontWeight:500,marginBottom:2}}>{it.desc}</div><div style={{fontSize:11,color:C.inkSoft}}>{it.projId}·{it.proj}</div></div><select value={it.status} onChange={e=>onUpdate(it.projId,it.id,e.target.value)} style={{...sSt({width:"auto",padding:"4px 8px",fontSize:11})}}>{REPAIR_STATUS.map(s=><option key={s}>{s}</option>)}</select></div>{it.note&&<div style={{fontSize:11,color:C.inkFaint,padding:"5px 8px",background:C.bgSunk,borderRadius:3,marginTop:5}}>{it.note}</div>}</div>))}</div>}</Modal>);
 }
 
 // ─── EditTaskRow ──────────────────────────────────────────────
@@ -682,7 +684,12 @@ export default function App(){
   const archivedProjects=projects.filter(p=>p.archived);
   const today=new Date().toISOString().slice(0,10);
   const overdueT=activeProjects.reduce((a,p)=>a+p.tasks.filter(t=>t.due&&!t.done&&t.due<today).length,0);
-  const repairT=activeProjects.reduce((a,p)=>a+(p.repairs||[]).filter(r=>r.status!=="已完成").length,0);
+  // 修繕進行：合併所有專案修繕 + 手動修繕，排除已完成
+  const allRepairsForBadge=[
+    ...[...activeProjects,...projects.filter(p=>p.archived)].flatMap(p=>(p.repairs||[]).map(r=>({...r,projId:p.id}))),
+    ...(customRepairs||[]).map(r=>({...r,projId:"__custom__"}))
+  ];
+  const repairT=allRepairsForBadge.filter(r=>r.status!=="已完成").length;
   const payT=activeProjects.reduce((a,p)=>a+p.tasks.filter(t=>isPayment(t.name)&&!t.done).length,0);
   const totalT=activeProjects.reduce((a,p)=>a+p.tasks.length,0);
   const doneT=activeProjects.reduce((a,p)=>a+p.tasks.filter(t=>t.done).length,0);
@@ -707,7 +714,7 @@ export default function App(){
       {modal==="member"&&<MemberPanel members={members} onClose={()=>setModal(null)} onSave={saveMembers}/>}
       {modal==="overdue"&&<OverdueModal projects={activeProjects} onClose={()=>setModal(null)}/>}
       {modal==="payment"&&<PaymentModal projects={activeProjects} onClose={()=>setModal(null)}/>}
-      {modal==="repair"&&<RepairModal projects={activeProjects} onClose={()=>setModal(null)} onUpdate={updateRepair}/>}
+      {modal==="repair"&&<RepairModal projects={[...activeProjects,...projects.filter(p=>p.archived)]} customRepairs={customRepairs} onClose={()=>setModal(null)} onUpdate={updateRepair}/>}
       {taskDetail&&proj&&<TaskDetailModal task={taskDetail} onClose={()=>setTaskDetail(null)} onUpdate={t=>{updateTaskDetail(proj.id,t);setTaskDetail(t);}} members={members} onReorderSub={(fId,tId)=>{const next=reorderSubtasks(proj.id,taskDetail.id,fId,tId);if(next){const updatedP=next.find(p=>p.id===proj.id);const updatedT=updatedP?.tasks.find(t=>t.id===taskDetail.id);if(updatedT)setTaskDetail({...updatedT});}}} />}
       {/* 衝突解決 Modal */}
       {conflict&&(
@@ -802,7 +809,7 @@ export default function App(){
         {/* ══ 總表 ══ */}
         {view==="overview"&&(<div style={{opacity:mounted?1:0,transition:"opacity 0.5s"}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:20}}>
-            {[{label:"進行中",value:activeProjects.filter(p=>p.status==="進行中").length,sub:"個專案",click:null},{label:"任務完成",value:`${doneT}／${totalT}`,sub:"",click:null},{label:"逾期任務",value:overdueT,sub:"個",warn:overdueT>0,click:()=>setModal("overdue")},{label:"修繕進行",value:repairT,sub:"項",warn:repairT>0,click:()=>setModal("repair")},{label:"待請款",value:payT,sub:"筆",warn:payT>0,click:()=>setModal("payment")}].map(s=>(<div key={s.label} onClick={s.click||undefined} style={{background:C.bgRaised,border:`1px solid ${s.warn?"#A07060":C.border}`,borderRadius:6,padding:"12px 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.08)",cursor:s.click?"pointer":"default",transition:"background 0.15s"}} onMouseEnter={e=>{if(s.click)e.currentTarget.style.background=C.bgHover;}} onMouseLeave={e=>{if(s.click)e.currentTarget.style.background=C.bgRaised;}}><div style={{fontSize:22,fontWeight:300,color:s.warn?C.warn:C.ink,letterSpacing:"-0.02em"}}>{s.value}</div><div style={{fontSize:9,color:C.inkFaint,marginTop:3,letterSpacing:"0.1em"}}>{s.label}{s.sub?` ${s.sub}`:""}</div>{s.click&&<div style={{fontSize:9,color:C.inkFaint,marginTop:2}}>點擊查看 →</div>}</div>))}
+            {[{label:"進行中",value:activeProjects.filter(p=>p.status==="進行中").length,sub:"個專案",click:null},{label:"任務完成",value:`${doneT}／${totalT}`,sub:"",click:null},{label:"逾期任務",value:overdueT,sub:"個",warn:overdueT>0,click:()=>setModal("overdue")},{label:"修繕進行",value:repairT,sub:"項",warn:repairT>0,click:()=>{setOTab("repairs");}},{label:"待請款",value:payT,sub:"筆",warn:payT>0,click:()=>setModal("payment")}].map(s=>(<div key={s.label} onClick={s.click||undefined} style={{background:C.bgRaised,border:`1px solid ${s.warn?"#A07060":C.border}`,borderRadius:6,padding:"12px 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.08)",cursor:s.click?"pointer":"default",transition:"background 0.15s"}} onMouseEnter={e=>{if(s.click)e.currentTarget.style.background=C.bgHover;}} onMouseLeave={e=>{if(s.click)e.currentTarget.style.background=C.bgRaised;}}><div style={{fontSize:22,fontWeight:300,color:s.warn?C.warn:C.ink,letterSpacing:"-0.02em"}}>{s.value}</div><div style={{fontSize:9,color:C.inkFaint,marginTop:3,letterSpacing:"0.1em"}}>{s.label}{s.sub?` ${s.sub}`:""}</div>{s.click&&<div style={{fontSize:9,color:C.inkFaint,marginTop:2}}>點擊查看 →</div>}</div>))}
           </div>
           <TabBar tabs={[["list","清單"],["gantt","甘特圖"],["repairs","修繕管理"]]} active={oTab} onChange={setOTab}/>
           {oTab==="list"&&(<div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
