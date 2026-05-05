@@ -823,6 +823,8 @@ export default function App(){
             setEditRepairId={setEditRepairId}
             editRepairData={editRepairData}
             setEditRepairData={setEditRepairData}
+            confirmRepairId={confirmRepairId}
+            setConfirmRepairId={setConfirmRepairId}
             onAdd={addGlobalRepair}
             onUpdate={updateGlobalRepair}
             onDelete={deleteGlobalRepair}
@@ -958,7 +960,25 @@ export default function App(){
 }
 
 // ─── RepairTab 元件 ──────────────────────────────────────────
-function RepairTab({projects,customRepairs,members,showAddRepairGlobal,setShowAddRepairGlobal,newRepairGlobal,setNewRepairGlobal,editRepairId,setEditRepairId,editRepairData,setEditRepairData,onAdd,onUpdate,onDelete,onMoveRepair}){
+function RepairTab({
+  projects,
+  customRepairs,
+  members,
+  showAddRepairGlobal,
+  setShowAddRepairGlobal,
+  newRepairGlobal,
+  setNewRepairGlobal,
+  editRepairId,
+  setEditRepairId,
+  editRepairData,
+  setEditRepairData,
+  confirmRepairId,
+  setConfirmRepairId,
+  onAdd,
+  onUpdate,
+  onDelete,
+  onMoveRepair
+}){
 
   const projectRepairs=projects.flatMap(p=>(p.repairs||[]).map(r=>({...r,projName:p.name,projId:p.id,projArchived:p.archived||false})));
   const manualRepairs=(customRepairs||[]).map(r=>({...r,projName:r.customProjectName||"手動輸入案件",projId:"__custom__",projArchived:false,isCustom:true}));
@@ -1027,15 +1047,16 @@ function RepairTab({projects,customRepairs,members,showAddRepairGlobal,setShowAd
       {!sorted.length&&<div style={{padding:"32px",textAlign:"center",color:C.inkFaint,fontSize:12}}>尚無修繕記錄</div>}
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {active.length>0&&<div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:2}}>進行中（{active.length}）</div>}
-        {active.map(r=><RepairCard key={r.id} r={r} projects={projects} members={members} isEditing={editRepairId===r.id} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(r.id);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
+        {active.map(r=><RepairCard key={`${r.projId}-${r.id}`} r={r} projects={projects} members={members} isEditing={editRepairId===`${r.projId}-${r.id}`} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(`${r.projId}-${r.id}`);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
         {done.length>0&&<div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.12em",marginTop:8,marginBottom:2}}>已完成（{done.length}）</div>}
-        {done.map(r=><RepairCard key={r.id} r={r} projects={projects} members={members} isEditing={editRepairId===r.id} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(r.id);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
+        {done.map(r=><RepairCard key={`${r.projId}-${r.id}`} r={r} projects={projects} members={members} isEditing={editRepairId===`${r.projId}-${r.id}`} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(`${r.projId}-${r.id}`);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
       </div>
     </div>
   );
 }
 
 function RepairCard({r,projects,members,isEditing,editData,setEditData,onStartEdit,onSave,onCancel,onStatusChange,onDelete,confirmId,setConfirmId}){
+  const repairKey=`${r.projId}-${r.id}`;
   const overdue=r.assignedDate&&r.status!=="已完成"&&new Date(r.assignedDate)<new Date();
   if(isEditing&&editData){
     return(
@@ -1086,10 +1107,10 @@ function RepairCard({r,projects,members,isEditing,editData,setEditData,onStartEd
             {REPAIR_STATUS.map(s=><option key={s}>{s}</option>)}
           </select>
           <button onClick={onStartEdit} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:13,padding:"2px 4px"}}>✎</button>
-                {confirmId===r.id
+                {confirmId===repairKey
                   ?<><button onClick={onDelete} style={{background:"none",border:"none",color:C.warn,cursor:"pointer",fontSize:10,padding:"2px 3px"}}>確認</button>
                     <button onClick={()=>setConfirmId(null)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:12,padding:"2px 3px"}}>取消</button></>
-                  :<button onClick={()=>setConfirmId(r.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:15,padding:"2px 4px"}}>×</button>
+                  :<button onClick={()=>setConfirmId(repairKey)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:15,padding:"2px 4px"}}>×</button>
                 }
         </div>
       </div>
