@@ -16,7 +16,7 @@ function rowsToProjects(pRows,tRows,rRows){
     start:sliceDate(r[5]), end:sliceDate(r[6]),
     members:r[7]?r[7].split(",").map(s=>s.trim()):[],
     archived:r[8]==="TRUE"||r[8]===true,
-    milestones:r[10]?JSON.parse(r[10]):{design:defaultDesignMS(),construction:defaultConstructionMS()},
+    milestones:r[10]?(() =>{try{return JSON.parse(r[10]);}catch(e){return{design:defaultDesignMS(),construction:defaultConstructionMS()};}})():{design:defaultDesignMS(),construction:defaultConstructionMS()},
     template:r[11]||"",
     tasks:tasks.filter(t=>t.projectId===r[0]),
     repairs:repairs.filter(rep=>rep.projectId===r[0]),
@@ -26,7 +26,8 @@ function rowsToTasks(rows){
   return rows.slice(1).filter(r=>r[0]).map(r=>({
     id:Number(r[0]), projectId:r[1]||"", name:r[2]||"", owner:r[3]||"",
     due:sliceDate(r[4]), done:r[5]==="TRUE"||r[5]===true, note:r[6]||"",
-    category:r[7]||"設計", subtasks:r[8]?JSON.parse(r[8]):[],
+    category:r[7]||"設計",
+    subtasks:r[8]?(() => { try { const p=JSON.parse(r[8]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
     updatedAt:r[9]||"",
   }));
 }
@@ -36,7 +37,7 @@ function rowsToRepairs(rows){
   }));
 }
 function rowsToMembers(rows){return rows.slice(1).filter(r=>r[0]&&(r[1]==="TRUE"||r[1]===true)).map(r=>r[0]);}
-function rowsToTemplates(rows){return rows.slice(1).filter(r=>r[0]).map(r=>({name:r[0],tasks:r[1]?JSON.parse(r[1]):[]}));}
+function rowsToTemplates(rows){return rows.slice(1).filter(r=>r[0]).map(r=>({name:r[0],tasks:r[1]?(() =>{try{const p=JSON.parse(r[1]);return Array.isArray(p)?p:[];}catch(e){return[];}})():[]}));}
 
 function projectsToRows(projects){
   const h=["id","name","type","status","client","start","end","members","archived","clientDetail","milestones","template"];
@@ -75,8 +76,8 @@ const STATUS_LIST=["規劃中","進行中","暫停","完成"];
 const ADMIN_PASSWORD="whatis2601";
 const REPAIR_STATUS=["待安排","已安排","處理中","已完成"];
 const TASK_CATEGORIES=["設計","工程","行政"];
-const SHORT=n=>n.slice(1);
-const INIT=n=>n[0];
+const SHORT=n=>(n&&n.length>1)?n.slice(1):n||"?";
+const INIT=n=>(n&&n.length>0)?n[0]:"?";
 
 const pct=t=>!t.length?0:Math.round(t.filter(x=>x.done).length/t.length*100);
 const daysLeft=e=>Math.ceil((new Date(e)-new Date())/86400000);
@@ -87,7 +88,7 @@ function hexToRgb(h){return{r:parseInt(h.slice(1,3),16),g:parseInt(h.slice(3,5),
 function rgbToHex(r,g,b){return`#${[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,"0")).join("")}`;}
 function rgbToCmyk(r,g,b){r/=255;g/=255;b/=255;const k=1-Math.max(r,g,b);if(k===1)return{c:0,m:0,y:0,k:100};return{c:Math.round((1-r-k)/(1-k)*100),m:Math.round((1-g-k)/(1-k)*100),y:Math.round((1-b-k)/(1-k)*100),k:Math.round(k*100)};}
 function cmykToHex(c,m,y,k){return rgbToHex(255*(1-c/100)*(1-k/100),255*(1-m/100)*(1-k/100),255*(1-y/100)*(1-k/100));}
-function ganttRange(items){const ds=items.flatMap(p=>[new Date(p.start),new Date(p.end)]);const mn=new Date(Math.min(...ds));mn.setDate(1);const mx=new Date(Math.max(...ds));mx.setMonth(mx.getMonth()+1,1);return{min:mn,max:mx,days:(mx-mn)/86400000};}
+function ganttRange(items){const validItems=items.filter(p=>p.start&&p.end);if(!validItems.length){const now=new Date();return{min:now,max:now,days:1};}const ds=validItems.flatMap(p=>[new Date(p.start),new Date(p.end)]).filter(d=>!isNaN(d));if(!ds.length){const now=new Date();return{min:now,max:now,days:1};}const mn=new Date(Math.min(...ds));mn.setDate(1);const mx=new Date(Math.max(...ds));mx.setMonth(mx.getMonth()+1,1);return{min:mn,max:mx,days:Math.max((mx-mn)/86400000,1)};}
 function monthList(s,e){const r=[],c=new Date(s.getFullYear(),s.getMonth(),1);while(c<e){r.push(new Date(c));c.setMonth(c.getMonth()+1);}return r;}
 
 // ─── UI 元件 ──────────────────────────────────────────────────
@@ -143,6 +144,9 @@ function ProjectGantt({project,members}){
 function MilestonePanel({milestones,onChange}){
   const[editing,setEditing]=useState(false);
   const[local,setLocal]=useState(JSON.parse(JSON.stringify(milestones)));
+  useEffect(()=>{
+    if(!editing)setLocal(JSON.parse(JSON.stringify(milestones)));
+  },[milestones]);
 
   function toggleMS(type,id){
     const next={...local,[type]:local[type].map(m=>m.id===id?{...m,done:!m.done}:m)};
@@ -408,30 +412,63 @@ export default function App(){
   useEffect(()=>{loadAll();},[]);
 
   // 每 2 分鐘自動重新整理，確保多人操作時資料同步
+  // 只有在沒有待儲存操作時才執行，避免覆蓋剛新增的資料
   useEffect(()=>{
     const timer=setInterval(()=>{
-      if(!saving)loadAll();
+      if(!saving&&!saveTimer.current)loadAll(true); // 合併模式，不覆蓋本地未儲存資料
     },120000);
     return()=>clearInterval(timer);
   },[saving]);
 
-  async function loadAll(){
-    setLoading(true);
+  async function loadAll(mergeWithLocal=false){
+    if(!mergeWithLocal)setLoading(true);
     try{
       const[pR,tR,rR,mR,tmR]=await Promise.all([sheetGet("Projects"),sheetGet("Tasks"),sheetGet("Repairs"),sheetGet("Members"),sheetGet("Templates").catch(()=>[["name","tasks"]])]);
+      const remoteProjects=rowsToProjects(pR,tR,rR);
       setMembers(rowsToMembers(mR));
-      setProjects(rowsToProjects(pR,tR,rR));
       setTemplates(rowsToTemplates(tmR));
+
+      if(mergeWithLocal){
+        // 合併：保留本地比遠端新的任務，也保留本地新建的專案
+        setProjects(prev=>{
+          // 合併遠端已有的專案
+          const merged=remoteProjects.map(remoteP=>{
+            const localP=prev.find(p=>p.id===remoteP.id);
+            if(!localP)return remoteP;
+            const mergedTasks=remoteP.tasks.map(remoteT=>{
+              const localT=localP.tasks.find(t=>t.id===remoteT.id);
+              if(!localT)return remoteT;
+              if(localT.updatedAt&&remoteT.updatedAt&&localT.updatedAt>remoteT.updatedAt)return localT;
+              return remoteT;
+            });
+            const remoteIds=new Set(remoteP.tasks.map(t=>t.id));
+            const localOnlyTasks=localP.tasks.filter(t=>!remoteIds.has(t.id));
+            return{...remoteP,tasks:[...mergedTasks,...localOnlyTasks]};
+          });
+          // 保留本地新建但遠端還沒有的專案（剛建立還沒存入 Sheets）
+          const remoteProjectIds=new Set(remoteProjects.map(p=>p.id));
+          const localOnlyProjects=prev.filter(p=>!remoteProjectIds.has(p.id));
+          return[...merged,...localOnlyProjects];
+        });
+      }else{
+        setProjects(remoteProjects);
+      }
     }catch(e){console.error(e);setSaveError(true);setTimeout(()=>setSaveError(false),4000);}
     finally{setLoading(false);}
   }
+
+  const latestState=useRef({projects,members,templates});
+  useEffect(()=>{latestState.current={projects,members,templates};},[projects,members,templates]);
 
   const scheduleSave=useCallback((ps,ms,tms)=>{
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
       setSaving(true);setSaveError(false);
       try{
-        const curP=ps||projects,curM=ms||members,curT=tms||templates;
+        // 用 ref 取得最新 state，避免 closure stale state 問題
+        const curP=ps||latestState.current.projects;
+        const curM=ms||latestState.current.members;
+        const curT=tms||latestState.current.templates;
 
         // 先讀取 Sheets 最新資料，合併後再寫回（避免多人同時操作覆蓋）
         const[latestPRows,latestTRows,latestRRows]=await Promise.all([
@@ -481,7 +518,7 @@ export default function App(){
         }
       }catch(e){console.error(e);setSaveError(true);setTimeout(()=>setSaveError(false),4000);}
       finally{setSaving(false);}
-    },1500);
+    },800);
   },[projects,members,templates]);
 
   const proj=selected?projects.find(p=>p.id===selected):null;
@@ -511,11 +548,11 @@ export default function App(){
   function toggle(pid,tid){const now=new Date().toISOString();updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,done:!t.done,updatedAt:now}:t)}:p));}
   function delTask(pid,tid){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.filter(t=>t.id!==tid)}:p));setConfirmDel(null);}
   function saveEdit(pid,tid,u){const now=new Date().toISOString();updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,...u,updatedAt:now}:t)}:p));setEditTask(null);}
-  function updateTaskDetail(pid,updated){updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===updated.id?updated:t)}:p));}
+  function updateTaskDetail(pid,updated){const now=new Date().toISOString();const u={...updated,updatedAt:now};updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===u.id?u:t)}:p));}
   function addRepair(pid){if(!newRepair.desc)return;updateProjects(projects.map(p=>p.id===pid?{...p,repairs:[...(p.repairs||[]),{id:Date.now(),desc:newRepair.desc,note:newRepair.note,status:"待安排"}]}:p));setNewRepair({desc:"",note:""});setShowAddRepair(false);}
   function updateMilestones(pid,ms){updateProjects(projects.map(p=>p.id===pid?{...p,milestones:ms}:p));}
   function reorderTasks(pid, fromId, toId){
-    setProjects(projects.map(p=>{
+    const next=projects.map(p=>{
       if(p.id!==pid)return p;
       const tasks=[...p.tasks];
       const fromIdx=tasks.findIndex(t=>t.id===fromId);
@@ -524,7 +561,9 @@ export default function App(){
       const[moved]=tasks.splice(fromIdx,1);
       tasks.splice(toIdx,0,moved);
       return{...p,tasks};
-    }));
+    });
+    setProjects(next);
+    scheduleSave(next,null,null);
   }
 
   function reorderSubtasks(pid, tid, fromId, toId){
@@ -555,11 +594,11 @@ export default function App(){
   }
   function applyTemplate(tpl){
     if(!proj)return;
-    const newTasks=tpl.tasks.map(t=>({id:Date.now()+Math.random(),projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[]}));
+    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[]}));
     updateProjects(projects.map(p=>p.id===proj.id?{...p,tasks:[...p.tasks,...newTasks]}:p));
     setShowTemplate(false);
   }
-  function goBack(){setView("overview");setSelected(null);setShowAdd(false);setEditTask(null);setConfirmDel(null);setTaskDetail(null);}
+  function goBack(){setView("overview");setSelected(null);setShowAdd(false);setEditTask(null);setConfirmDel(null);setTaskDetail(null);setShowEditInfo(false);setShowTemplate(false);}
   function toggleCat(cat){setCollapsedCats(c=>({...c,[cat]:!c[cat]}));}
 
   const activeProjects=projects.filter(p=>!p.archived);
