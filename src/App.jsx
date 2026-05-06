@@ -271,7 +271,7 @@ function NewTaskImageUpload({images,onUpload,onDelete}){
 }
 
 function ImageSection({images,onUpload,onDelete,uploading}){
-  const inputRef=React.useRef(null);
+  const inputRef=useRef(null);
   return(
     <div style={{marginBottom:16}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
