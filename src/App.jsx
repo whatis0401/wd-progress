@@ -2,6 +2,35 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Apps Script API ──────────────────────────────────────────
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwsiomxJ5rB8dVRciy8OGmU6b0R6dunX8mnXWDwgzhVgwytTu6mOu6DbeBVYC7CRc2tTw/exec";
+async function uploadImage(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=async(e)=>{
+      try{
+        const base64=e.target.result.split(",")[1];
+        const mimeType=file.type;
+        const fileName=`wd_${Date.now()}_${file.name}`;
+        const res=await fetch(GAS_URL,{
+          method:"POST",
+          headers:{"Content-Type":"text/plain"},
+          body:JSON.stringify({action:"uploadImage",base64,fileName,mimeType})
+        });
+        const data=await res.json();
+        resolve(data);
+      }catch(err){reject(err);}
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function deleteImage(fileId){
+  await fetch(GAS_URL,{
+    method:"POST",
+    headers:{"Content-Type":"text/plain"},
+    body:JSON.stringify({action:"deleteImage",fileId})
+  });
+}
+
 async function sheetGet(s){const r=await fetch(`${GAS_URL}?sheet=${encodeURIComponent(s)}`);if(!r.ok)throw new Error(r.status);return r.json();}
 async function sheetPut(s,v){const r=await fetch(GAS_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({sheet:s,values:v})});if(!r.ok)throw new Error(r.status);return r.json();}
 
@@ -24,11 +53,13 @@ function rowsToProjects(pRows,tRows,rRows){
 }
 function rowsToTasks(rows){
   return rows.slice(1).filter(r=>r[0]).map(r=>({
-    id:Number(r[0]), projectId:r[1]||"", name:r[2]||"", owner:r[3]||"",
+    id:Number(r[0]), projectId:r[1]||"", name:r[2]||"",
+    owners:r[3]?r[3].split(",").map(s=>s.trim()).filter(Boolean):[],
     due:sliceDate(r[4]), done:r[5]==="TRUE"||r[5]===true, note:r[6]||"",
     category:r[7]||"設計",
     subtasks:r[8]?(() => { try { const p=JSON.parse(r[8]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
     updatedAt:r[9]||"",
+    images:r[10]?(() => { try { const p=JSON.parse(r[10]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
   }));
 }
 function rowsToRepairs(rows){
@@ -45,8 +76,8 @@ function projectsToRows(projects){
   return[h,...projects.map(p=>[p.id,p.name,p.type,p.status,p.client||"",p.start,p.end,(p.members||[]).join(","),p.archived?"TRUE":"FALSE",p.clientDetail||"",JSON.stringify(p.milestones||{}),p.template||""])];
 }
 function tasksToRows(projects){
-  const h=["id","projectId","name","owner","due","done","note","category","subtasks","updatedAt"];
-  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,t.owner,t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[]),t.updatedAt||""]))];
+  const h=["id","projectId","name","owners","due","done","note","category","subtasks","updatedAt","images"];
+  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,(t.owners||[]).join(","),t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[]),t.updatedAt||"",JSON.stringify(t.images||[])]))];
 }
 function repairsToRows(projects){
   const h=["id","projectId","desc","status","note","assignedDate","owner"];
@@ -132,7 +163,7 @@ function GanttChart({projects,members}){
   const tp=Math.max(0,Math.min(100,(today-min)/86400000/td*100));
   const bL=d=>Math.max(0,(new Date(d)-min)/86400000/td*100);
   const bW=(s,e)=>Math.max(0.5,bL(e)-bL(s));
-  return(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,overflow:"auto"}}><div style={{minWidth:520}}><div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}><div style={{width:200,flexShrink:0,borderRight:`1px solid ${C.border}`,padding:"9px 14px",fontSize:10,color:C.inkSoft}}>專案</div><div style={{flex:1,display:"flex",position:"relative"}}>{ms.map((m,i)=>(<div key={i} style={{flex:1,padding:"9px 0 9px 6px",fontSize:10,color:C.inkSoft,borderRight:`1px solid ${C.borderLight}`}}>{m.getFullYear()===today.getFullYear()?`${m.getMonth()+1}月`:`${String(m.getFullYear()).slice(2)}/${m.getMonth()+1}`}</div>))}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.6}}/></div></div>{valid.map((p,pi)=>{const pc=pct(p.tasks);return(<div key={p.id} style={{display:"flex",alignItems:"center",borderBottom:pi<valid.length-1?`1px solid ${C.borderLight}`:"none",minHeight:50}}><div style={{width:200,flexShrink:0,padding:"8px 14px",borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:3}}><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:15,height:15,borderRadius:2,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.accentText,flexShrink:0}}>{typeTag(p.type)}</span><span style={{fontSize:12,color:C.ink,fontWeight:500}}>{p.name}</span></div><div style={{fontSize:9,color:C.inkFaint,paddingLeft:21}}>{p.id}</div></div><div style={{flex:1,position:"relative",height:50,display:"flex",alignItems:"center"}}>{ms.map((_,i)=><div key={i} style={{position:"absolute",top:0,bottom:0,left:`${i/ms.length*100}%`,width:1,background:C.borderLight,opacity:0.5}}/>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.3}}/><div style={{position:"absolute",left:`${bL(p.start)}%`,width:`${bW(p.start,p.end)}%`,height:20,borderRadius:3,background:C.bgSunk,border:`1px solid ${C.border}`,overflow:"hidden"}}><div style={{width:`${pc}%`,height:"100%",background:C.accentMid,transition:"width 0.8s"}}/></div>{p.tasks.filter(t=>t.due).map(t=>(<div key={t.id} title={`${t.name}·${t.owner}`} style={{position:"absolute",left:`calc(${bL(t.due)}% - 3px)`,width:7,height:7,borderRadius:"50%",background:t.done?C.ok:C.inkSoft,border:`1px solid ${t.done?C.ok:C.border}`,top:"50%",transform:"translateY(-50%)",zIndex:1,cursor:"default"}}/>))}{pc>6&&<span style={{position:"absolute",left:`calc(${bL(p.start)}% + 7px)`,fontSize:9,color:C.accentText,zIndex:2}}>{pc}%</span>}</div></div>);})} <div style={{display:"flex",borderTop:`1px solid ${C.borderLight}`,padding:"5px 0 5px 200px",fontSize:9,color:C.today}}><div style={{flex:1,position:"relative"}}><span style={{position:"absolute",left:`${tp}%`,transform:"translateX(-50%)"}}>TODAY</span></div></div></div></div>);
+  return(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,overflow:"auto"}}><div style={{minWidth:520}}><div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}><div style={{width:200,flexShrink:0,borderRight:`1px solid ${C.border}`,padding:"9px 14px",fontSize:10,color:C.inkSoft}}>專案</div><div style={{flex:1,display:"flex",position:"relative"}}>{ms.map((m,i)=>(<div key={i} style={{flex:1,padding:"9px 0 9px 6px",fontSize:10,color:C.inkSoft,borderRight:`1px solid ${C.borderLight}`}}>{m.getFullYear()===today.getFullYear()?`${m.getMonth()+1}月`:`${String(m.getFullYear()).slice(2)}/${m.getMonth()+1}`}</div>))}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.6}}/></div></div>{valid.map((p,pi)=>{const pc=pct(p.tasks);return(<div key={p.id} style={{display:"flex",alignItems:"center",borderBottom:pi<valid.length-1?`1px solid ${C.borderLight}`:"none",minHeight:50}}><div style={{width:200,flexShrink:0,padding:"8px 14px",borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:3}}><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:15,height:15,borderRadius:2,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.accentText,flexShrink:0}}>{typeTag(p.type)}</span><span style={{fontSize:12,color:C.ink,fontWeight:500}}>{p.name}</span></div><div style={{fontSize:9,color:C.inkFaint,paddingLeft:21}}>{p.id}</div></div><div style={{flex:1,position:"relative",height:50,display:"flex",alignItems:"center"}}>{ms.map((_,i)=><div key={i} style={{position:"absolute",top:0,bottom:0,left:`${i/ms.length*100}%`,width:1,background:C.borderLight,opacity:0.5}}/>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.3}}/><div style={{position:"absolute",left:`${bL(p.start)}%`,width:`${bW(p.start,p.end)}%`,height:20,borderRadius:3,background:C.bgSunk,border:`1px solid ${C.border}`,overflow:"hidden"}}><div style={{width:`${pc}%`,height:"100%",background:C.accentMid,transition:"width 0.8s"}}/></div>{p.tasks.filter(t=>t.due).map(t=>(<div key={t.id} title={`${t.name}·${(t.owners||[]).join("、")}`} style={{position:"absolute",left:`calc(${bL(t.due)}% - 3px)`,width:7,height:7,borderRadius:"50%",background:t.done?C.ok:C.inkSoft,border:`1px solid ${t.done?C.ok:C.border}`,top:"50%",transform:"translateY(-50%)",zIndex:1,cursor:"default"}}/>))}{pc>6&&<span style={{position:"absolute",left:`calc(${bL(p.start)}% + 7px)`,fontSize:9,color:C.accentText,zIndex:2}}>{pc}%</span>}</div></div>);})} <div style={{display:"flex",borderTop:`1px solid ${C.borderLight}`,padding:"5px 0 5px 200px",fontSize:9,color:C.today}}><div style={{flex:1,position:"relative"}}><span style={{position:"absolute",left:`${tp}%`,transform:"translateX(-50%)"}}>TODAY</span></div></div></div></div>);
 }
 
 function ProjectGantt({project,members}){
@@ -143,7 +174,7 @@ function ProjectGantt({project,members}){
   const td=Math.max((mx-mn)/86400000,1),ms=monthList(mn,mx),today=new Date();
   const tp=Math.max(0,Math.min(100,(today-mn)/86400000/td*100));
   const pOf=d=>Math.max(0,Math.min(100,(new Date(d)-mn)/86400000/td*100));
-  return(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,overflow:"auto"}}><div style={{minWidth:460}}><div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}><div style={{width:160,flexShrink:0,borderRight:`1px solid ${C.border}`,padding:"9px 14px",fontSize:10,color:C.inkSoft}}>任務</div><div style={{flex:1,display:"flex",position:"relative"}}>{ms.map((m,i)=><div key={i} style={{flex:1,padding:"9px 0 9px 5px",fontSize:10,color:C.inkSoft,borderRight:`1px solid ${C.borderLight}`}}>{m.getMonth()+1}月</div>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.5}}/></div></div>{tasks.map((t,i)=>{const ov=!t.done&&new Date(t.due)<today;const dp=pOf(t.due);return(<div key={t.id} style={{display:"flex",alignItems:"center",minHeight:36,borderBottom:i<tasks.length-1?`1px solid ${C.borderLight}`:"none"}}><div style={{width:160,flexShrink:0,padding:"5px 14px",borderRight:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:6}}><div style={{width:12,height:12,border:`1px solid ${t.done?C.ok:C.border}`,borderRadius:2,background:t.done?C.ok:"transparent",flexShrink:0}}/><span style={{fontSize:11,color:t.done?C.inkFaint:C.inkMid,textDecoration:t.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span></div><div style={{flex:1,position:"relative",height:36,display:"flex",alignItems:"center"}}>{ms.map((_,mi)=><div key={mi} style={{position:"absolute",top:0,bottom:0,left:`${mi/ms.length*100}%`,width:1,background:C.borderLight,opacity:0.4}}/>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.3}}/><div title={`期限：${t.due}`} style={{position:"absolute",left:`calc(${dp}% - 5px)`,width:10,height:10,borderRadius:"50%",zIndex:1,background:t.done?C.ok:ov?C.warn:C.inkSoft,border:`1px solid ${t.done?C.ok:ov?C.warn:C.border}`}}/><div style={{position:"absolute",left:`calc(${dp}% + 10px)`}}><Avatar name={t.owner} size={15} members={members}/></div></div></div>);})} </div></div>);
+  return(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,overflow:"auto"}}><div style={{minWidth:460}}><div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}><div style={{width:160,flexShrink:0,borderRight:`1px solid ${C.border}`,padding:"9px 14px",fontSize:10,color:C.inkSoft}}>任務</div><div style={{flex:1,display:"flex",position:"relative"}}>{ms.map((m,i)=><div key={i} style={{flex:1,padding:"9px 0 9px 5px",fontSize:10,color:C.inkSoft,borderRight:`1px solid ${C.borderLight}`}}>{m.getMonth()+1}月</div>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.5}}/></div></div>{tasks.map((t,i)=>{const ov=!t.done&&new Date(t.due)<today;const dp=pOf(t.due);return(<div key={t.id} style={{display:"flex",alignItems:"center",minHeight:36,borderBottom:i<tasks.length-1?`1px solid ${C.borderLight}`:"none"}}><div style={{width:160,flexShrink:0,padding:"5px 14px",borderRight:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:6}}><div style={{width:12,height:12,border:`1px solid ${t.done?C.ok:C.border}`,borderRadius:2,background:t.done?C.ok:"transparent",flexShrink:0}}/><span style={{fontSize:11,color:t.done?C.inkFaint:C.inkMid,textDecoration:t.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span></div><div style={{flex:1,position:"relative",height:36,display:"flex",alignItems:"center"}}>{ms.map((_,mi)=><div key={mi} style={{position:"absolute",top:0,bottom:0,left:`${mi/ms.length*100}%`,width:1,background:C.borderLight,opacity:0.4}}/>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.3}}/><div title={`期限：${t.due}`} style={{position:"absolute",left:`calc(${dp}% - 5px)`,width:10,height:10,borderRadius:"50%",zIndex:1,background:t.done?C.ok:ov?C.warn:C.inkSoft,border:`1px solid ${t.done?C.ok:ov?C.warn:C.border}`}}/><div style={{position:"absolute",left:`calc(${dp}% + 10px)`}}>{(t.owners||[]).slice(0,2).map((o,i)=><Avatar key={i} name={o} size={14} members={members}/>)}</div></div></div>);})} </div></div>);
 }
 
 // ─── MilestonePanel ───────────────────────────────────────────
@@ -203,6 +234,73 @@ function MilestonePanel({milestones,onChange}){
 }
 
 // ─── TaskDetail Modal ─────────────────────────────────────────
+
+// ─── ImageSection 元件 ───────────────────────────────────────
+function NewTaskImageUpload({images,onUpload,onDelete}){
+  const[uploading,setUploading]=useState(false);
+  const inputRef=useRef(null);
+  return(
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <span style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em"}}>附加圖片（選填）</span>
+        <button type="button" onClick={()=>inputRef.current.click()} disabled={uploading}
+          style={{...bSt(),padding:"3px 10px",fontSize:11,opacity:uploading?0.6:1}}>
+          {uploading?"上傳中…":"＋ 圖片"}
+        </button>
+        <input ref={inputRef} type="file" accept="image/*" multiple style={{display:"none"}}
+          onChange={async e=>{
+            setUploading(true);
+            for(const f of Array.from(e.target.files))await onUpload(f);
+            setUploading(false);
+            e.target.value="";
+          }}/>
+      </div>
+      {(images||[]).length>0&&(
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {(images||[]).map((img,i)=>(
+            <div key={i} style={{position:"relative",width:72,height:72,borderRadius:4,overflow:"hidden",border:`1px solid ${C.border}`,flexShrink:0}}>
+              <img src={img.thumbUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}} onClick={()=>window.open(img.viewUrl,"_blank")}/>
+              <button type="button" onClick={()=>onDelete(img.fileId,i)}
+                style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.55)",border:"none",color:"#fff",borderRadius:"50%",width:18,height:18,cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",padding:0,lineHeight:1}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImageSection({images,onUpload,onDelete,uploading}){
+  const inputRef=React.useRef(null);
+  return(
+    <div style={{marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <span style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em"}}>圖片紀錄</span>
+        <button onClick={()=>inputRef.current.click()} disabled={uploading}
+          style={{...bSt(),padding:"3px 10px",fontSize:11,opacity:uploading?0.6:1}}>
+          {uploading?"上傳中…":"＋ 上傳圖片"}
+        </button>
+        <input ref={inputRef} type="file" accept="image/*" multiple style={{display:"none"}}
+          onChange={e=>{Array.from(e.target.files).forEach(f=>onUpload(f));e.target.value="";}}/>
+      </div>
+      {(images||[]).length===0&&(
+        <div style={{fontSize:11,color:C.inkFaint,textAlign:"center",padding:"12px 0"}}>尚無圖片，點上傳加入施工紀錄</div>
+      )}
+      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+        {(images||[]).map((img,i)=>(
+          <div key={i} style={{position:"relative",width:90,height:90,borderRadius:4,overflow:"hidden",border:`1px solid ${C.border}`,flexShrink:0}}>
+            <img src={img.thumbUrl} alt={img.fileName||"圖片"} style={{width:"100%",height:"100%",objectFit:"cover",cursor:"pointer"}}
+              onClick={()=>window.open(img.viewUrl,"_blank")}
+              onError={e=>{e.target.style.display="none";}}/>
+            <button onClick={()=>onDelete(img.fileId,i)}
+              style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,0.55)",border:"none",color:"#fff",borderRadius:"50%",width:18,height:18,cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",padding:0,lineHeight:1}}>×</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
   const[newSub,setNewSub]=useState("");
   const[editSubId,setEditSubId]=useState(null);
@@ -211,10 +309,12 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
   const subDragOverRef=useRef(null);
   const[subDraggingId,setSubDraggingId]=useState(null);
   const[subDragOverId,setSubDragOverId]=useState(null);
+  const[uploading,setUploading]=useState(false);
+  const[subUploadingId,setSubUploadingId]=useState(null);
 
   function addSub(){
     if(!newSub.trim())return;
-    const subtasks=[...(task.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false}];
+    const subtasks=[...(task.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false,images:[]}];
     onUpdate({...task,subtasks});setNewSub("");
   }
   function toggleSub(id){
@@ -225,10 +325,7 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
     const subtasks=(task.subtasks||[]).filter(s=>s.id!==id);
     onUpdate({...task,subtasks});
   }
-  function startEditSub(s){
-    setEditSubId(s.id);
-    setEditSubName(s.name);
-  }
+  function startEditSub(s){setEditSubId(s.id);setEditSubName(s.name);}
   function saveEditSub(id){
     if(!editSubName.trim())return;
     const subtasks=(task.subtasks||[]).map(s=>s.id===id?{...s,name:editSubName.trim()}:s);
@@ -236,14 +333,60 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
     setEditSubId(null);setEditSubName("");
   }
 
+  // 任務圖片上傳
+  async function handleUploadImage(file){
+    setUploading(true);
+    try{
+      const result=await uploadImage(file);
+      if(result.success){
+        const images=[...(task.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}];
+        onUpdate({...task,images});
+      }
+    }catch(e){console.error(e);}
+    finally{setUploading(false);}
+  }
+
+  // 任務圖片刪除
+  async function handleDeleteImage(fileId,idx){
+    const images=(task.images||[]).filter((_,i)=>i!==idx);
+    onUpdate({...task,images});
+    await deleteImage(fileId);
+  }
+
+  // 子任務圖片上傳
+  async function handleUploadSubImage(subId,file){
+    setSubUploadingId(subId);
+    try{
+      const result=await uploadImage(file);
+      if(result.success){
+        const subtasks=(task.subtasks||[]).map(s=>s.id===subId?{...s,images:[...(s.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}]}:s);
+        onUpdate({...task,subtasks});
+      }
+    }catch(e){console.error(e);}
+    finally{setSubUploadingId(null);}
+  }
+
+  // 子任務圖片刪除
+  async function handleDeleteSubImage(subId,fileId,idx){
+    const subtasks=(task.subtasks||[]).map(s=>s.id===subId?{...s,images:(s.images||[]).filter((_,i)=>i!==idx)}:s);
+    onUpdate({...task,subtasks});
+    await deleteImage(fileId);
+  }
+
   return(
-    <Modal title={task.name} onClose={onClose}>
-      <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-        <div style={{fontSize:11,color:C.inkSoft}}>負責：{task.owner}</div>
+    <Modal title={task.name} onClose={onClose} wide>
+      {/* 任務資訊 */}
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{fontSize:11,color:C.inkSoft}}>負責：{(task.owners||[]).join("、")||"未指派"}</div>
         {task.due&&<div style={{fontSize:11,color:C.inkSoft}}>期限：{fmt(task.due)}</div>}
         <div style={{fontSize:11,color:C.inkSoft}}>類別：{task.category}</div>
         {task.note&&<div style={{fontSize:11,color:C.inkFaint}}>備註：{task.note}</div>}
       </div>
+
+      {/* 圖片區塊 */}
+      <ImageSection images={task.images||[]} onUpload={handleUploadImage} onDelete={handleDeleteImage} uploading={uploading}/>
+
+      {/* 子任務 */}
       <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>子任務</div>
       <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:12}}>
         {[...(task.subtasks||[]).filter(s=>!s.done),...(task.subtasks||[]).filter(s=>s.done)].map(s=>(
@@ -253,22 +396,32 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
             onDragOver={e=>{e.preventDefault();subDragOverRef.current=s.id;setSubDragOverId(s.id);}}
             onDragEnd={()=>{setSubDraggingId(null);setSubDragOverId(null);subDragRef.current=null;subDragOverRef.current=null;}}
             onDrop={()=>{if(subDragRef.current&&subDragOverRef.current&&subDragRef.current!==subDragOverRef.current){onReorderSub&&onReorderSub(subDragRef.current,subDragOverRef.current);}setSubDraggingId(null);setSubDragOverId(null);subDragRef.current=null;subDragOverRef.current=null;}}
-            style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:C.bg,border:`1px solid ${subDragOverId===s.id&&subDraggingId!==s.id?C.accent:C.border}`,borderRadius:4,opacity:subDraggingId===s.id?0.3:s.done?0.5:1,transition:"opacity 0.15s, border-color 0.15s, transform 0.15s",boxShadow:subDragOverId===s.id&&subDraggingId!==s.id?"0 0 0 2px "+C.accent+"44":"none",cursor:"grab",transform:subDragOverId===s.id&&subDraggingId!==s.id?"translateY(-2px)":"none"}}>
-            <div onClick={()=>toggleSub(s.id)} style={{width:14,height:14,border:`1.5px solid ${s.done?C.ok:C.border}`,borderRadius:3,cursor:"pointer",background:s.done?C.ok:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              {s.done&&<span style={{fontSize:9,color:"#e8e8e8"}}>✓</span>}
+            style={{background:C.bg,border:`1px solid ${subDragOverId===s.id&&subDraggingId!==s.id?C.accent:C.border}`,borderRadius:4,opacity:subDraggingId===s.id?0.3:s.done?0.5:1,transition:"opacity 0.15s,border-color 0.15s",boxShadow:subDragOverId===s.id&&subDraggingId!==s.id?"0 0 0 2px "+C.accent+"44":"none",cursor:"grab"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px"}}>
+              <div onClick={()=>toggleSub(s.id)} style={{width:14,height:14,border:`1.5px solid ${s.done?C.ok:C.border}`,borderRadius:3,cursor:"pointer",background:s.done?C.ok:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {s.done&&<span style={{fontSize:9,color:"#e8e8e8"}}>✓</span>}
+              </div>
+              {editSubId===s.id
+                ?<input value={editSubName} onChange={e=>setEditSubName(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")saveEditSub(s.id);if(e.key==="Escape")setEditSubId(null);}}
+                    style={{...iSt({flex:1,padding:"3px 7px",fontSize:12})}} autoFocus/>
+                :<span style={{flex:1,fontSize:12,color:s.done?C.inkFaint:C.ink,textDecoration:s.done?"line-through":"none"}}>{s.name}</span>
+              }
+              {/* 子任務圖片數量 */}
+              {(s.images||[]).length>0&&<span style={{fontSize:10,color:C.inkFaint}}>📷 {s.images.length}</span>}
+              {editSubId===s.id
+                ?<><button onClick={()=>saveEditSub(s.id)} style={{background:"none",border:"none",color:C.ok,cursor:"pointer",fontSize:13}}>✓</button>
+                  <button onClick={()=>setEditSubId(null)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>✕</button></>
+                :<><button onClick={()=>startEditSub(s)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:12,padding:"2px 3px"}}>✎</button>
+                  <button onClick={()=>delSub(s.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>×</button></>
+              }
             </div>
-            {editSubId===s.id
-              ?<input value={editSubName} onChange={e=>setEditSubName(e.target.value)}
-                  onKeyDown={e=>{if(e.key==="Enter")saveEditSub(s.id);if(e.key==="Escape"){setEditSubId(null);}}}
-                  style={{...iSt({flex:1,padding:"3px 7px",fontSize:12})}} autoFocus/>
-              :<span style={{flex:1,fontSize:12,color:s.done?C.inkFaint:C.ink,textDecoration:s.done?"line-through":"none"}}>{s.name}</span>
-            }
-            {editSubId===s.id
-              ?<><button onClick={()=>saveEditSub(s.id)} style={{background:"none",border:"none",color:C.ok,cursor:"pointer",fontSize:13}}>✓</button>
-                <button onClick={()=>setEditSubId(null)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>✕</button></>
-              :<><button onClick={()=>startEditSub(s)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:12,padding:"2px 3px"}}>✎</button>
-                <button onClick={()=>delSub(s.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>×</button></>
-            }
+            {/* 子任務圖片區塊 */}
+            {!s.done&&(
+              <div style={{padding:"0 10px 8px 36px"}}>
+                <ImageSection images={s.images||[]} onUpload={f=>handleUploadSubImage(s.id,f)} onDelete={(fId,i)=>handleDeleteSubImage(s.id,fId,i)} uploading={subUploadingId===s.id}/>
+              </div>
+            )}
           </div>
         ))}
         {(task.subtasks||[]).length===0&&<div style={{fontSize:11,color:C.inkFaint,textAlign:"center",padding:"12px"}}>尚無子任務</div>}
@@ -371,8 +524,40 @@ function RepairModal({projects,customRepairs,onClose,onUpdate}){
 
 // ─── EditTaskRow ──────────────────────────────────────────────
 function EditTaskRow({task,onSave,onCancel,members}){
-  const[f,setF]=useState({name:task.name,owner:task.owner,due:task.due||"",note:task.note||"",category:task.category||"設計"});
-  return(<div style={{padding:"10px 13px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:5,display:"flex",flexDirection:"column",gap:8}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><Field label="任務名稱"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} style={iSt()}/></Field><Field label="負責人"><select value={f.owner} onChange={e=>setF({...f,owner:e.target.value})} style={sSt()}>{members.map(m=><option key={m}>{m}</option>)}</select></Field><Field label="期限（選填）"><input type="date" value={f.due} onChange={e=>setF({...f,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field><Field label="類別"><select value={f.category} onChange={e=>setF({...f,category:e.target.value})} style={sSt()}>{TASK_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="備註"><input value={f.note} onChange={e=>setF({...f,note:e.target.value})} placeholder="選填" style={iSt()}/></Field></div><div style={{display:"flex",gap:6,justifyContent:"flex-end"}}><button onClick={()=>onSave(f)} style={{...bSt(C.accent,C.accent,C.accentText),padding:"5px 14px",fontSize:11}}>儲存</button><button onClick={onCancel} style={{...bSt(),padding:"5px 14px",fontSize:11}}>取消</button></div></div>);
+  const[f,setF]=useState({name:task.name,owners:task.owners||[],due:task.due||"",note:task.note||"",category:task.category||"設計"});
+  return(
+    <div style={{padding:"10px 13px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:5,display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <Field label="任務名稱"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} style={iSt()}/></Field>
+        <Field label="期限（選填）"><input type="date" value={f.due} onChange={e=>setF({...f,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field>
+        <Field label="類別"><select value={f.category} onChange={e=>setF({...f,category:e.target.value})} style={sSt()}>{TASK_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field>
+        <Field label="備註"><input value={f.note} onChange={e=>setF({...f,note:e.target.value})} placeholder="選填" style={iSt()}/></Field>
+      </div>
+      <Field label="負責人（可多選）">
+        <div style={{padding:"8px 10px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:4,minHeight:42}}>
+          {members.length===0
+            ?<span style={{fontSize:11,color:C.inkFaint}}>載入中…</span>
+            :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {members.map(m=>{
+                const sel=(f.owners||[]).includes(m);
+                return(
+                  <button type="button" key={m}
+                    onClick={()=>setF(prev=>{const cur=prev.owners||[];return{...prev,owners:sel?cur.filter(x=>x!==m):[...cur,m]};})}
+                    style={{...bSt(sel?C.accent:"transparent",sel?C.accent:C.border,sel?C.accentText:C.inkMid),padding:"4px 12px",fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+                    <Avatar name={m} size={14} members={members}/>{m}
+                  </button>
+                );
+              })}
+            </div>
+          }
+        </div>
+      </Field>
+      <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+        <button onClick={()=>onSave(f)} style={{...bSt(C.accent,C.accent,C.accentText),padding:"5px 14px",fontSize:11}}>儲存</button>
+        <button onClick={onCancel} style={{...bSt(),padding:"5px 14px",fontSize:11}}>取消</button>
+      </div>
+    </div>
+  );
 }
 
 // ─── 主元件 ──────────────────────────────────────────────────
@@ -392,7 +577,7 @@ export default function App(){
   const[showAdd,setShowAdd]=useState(false);
   const[editTask,setEditTask]=useState(null);
   const[taskDetail,setTaskDetail]=useState(null);
-  const[newTask,setNewTask]=useState({name:"",owner:"",due:"",note:"",category:"設計"}); // owner 在 members 載入後由 useEffect 補上
+  const[newTask,setNewTask]=useState({name:"",owners:[],due:"",note:"",category:"設計",images:[]}); // owner 在 members 載入後由 useEffect 補上
   const[newProj,setNewProj]=useState({name:"",type:"室內",client:"",clientDetail:"",start:"",end:"",members:[]});
   const[customId,setCustomId]=useState("");
   const[editingId,setEditingId]=useState(false);
@@ -427,7 +612,7 @@ export default function App(){
   useEffect(()=>{C=buildColors(colorHex);setMounted(m=>!m);setTimeout(()=>setMounted(m=>!m),10);},[colorHex]);
   useEffect(()=>{function h(e){if(funcRef.current&&!funcRef.current.contains(e.target))setShowFuncMenu(false);}document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
   useEffect(()=>{loadAll();},[]);
-  useEffect(()=>{if(members.length>0&&!newTask.owner)setNewTask(t=>({...t,owner:members[0]}));},[members]);
+  useEffect(()=>{if(members.length>0&&(newTask.owners||[]).length===0)setNewTask(t=>({...t,owners:[members[0]]}));},[members]);
 
   // 每 2 分鐘自動重新整理，確保多人操作時資料同步
   // 只有在沒有待儲存操作時才執行，避免覆蓋剛新增的資料
@@ -619,8 +804,8 @@ export default function App(){
   function addTask(pid){
     if(!newTask.name)return;
     const now=new Date().toISOString();
-    const next=projects.map(p=>p.id===pid?{...p,tasks:[...p.tasks,{id:Date.now(),...newTask,done:false,subtasks:[],updatedAt:now}]}:p);
-    updateProjects(next);setNewTask({name:"",owner:members[0]||"",due:"",note:"",category:"設計"});setShowAdd(false);
+    const next=projects.map(p=>p.id===pid?{...p,tasks:[...p.tasks,{id:Date.now(),...newTask,owners:newTask.owners||[],done:false,subtasks:[],images:newTask.images||[],updatedAt:now}]}:p);
+    updateProjects(next);setNewTask({name:"",owners:members.length>0?[members[0]]:[],due:"",note:"",category:"設計",images:[]});setShowAdd(false);
   }
 
   function toggle(pid,tid){const now=new Date().toISOString();updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,done:!t.done,updatedAt:now}:t)}:p));}
@@ -673,7 +858,7 @@ export default function App(){
   }
   function applyTemplate(tpl){
     if(!proj)return;
-    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[],updatedAt:new Date().toISOString()}));
+    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[],images:[],owners:t.owners||[members[0]||""],updatedAt:new Date().toISOString()}));
     updateProjects(projects.map(p=>p.id===proj.id?{...p,tasks:[...p.tasks,...newTasks]}:p));
     setShowTemplate(false);
   }
@@ -891,14 +1076,38 @@ export default function App(){
             {showAdd&&(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                 <Field label="任務名稱"><input placeholder="輸入任務名稱" value={newTask.name} onChange={e=>setNewTask({...newTask,name:e.target.value})} style={iSt()}/></Field>
-                <Field label="負責人"><select value={newTask.owner||members[0]} onChange={e=>setNewTask({...newTask,owner:e.target.value})} style={sSt()}>{members.map(m=><option key={m}>{m}</option>)}</select></Field>
                 <Field label="期限（選填）"><input type="date" value={newTask.due} onChange={e=>setNewTask({...newTask,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field>
                 <Field label="類別"><select value={newTask.category} onChange={e=>setNewTask({...newTask,category:e.target.value})} style={sSt()}>{TASK_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field>
                 <Field label="備註"><input placeholder="選填" value={newTask.note} onChange={e=>setNewTask({...newTask,note:e.target.value})} style={iSt()}/></Field>
               </div>
+              {/* 負責人多選 */}
+              <Field label="負責人（可多選）">
+                <div style={{padding:"8px 10px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:4,minHeight:42}}>
+                  {members.length===0
+                    ?<span style={{fontSize:11,color:C.inkFaint}}>載入人員中…</span>
+                    :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {members.map(m=>{const sel=(newTask.owners||[]).includes(m);return(
+                        <button type="button" key={m}
+                          onClick={()=>setNewTask(prev=>{const cur=prev.owners||[];return {...prev,owners:sel?cur.filter(x=>x!==m):[...cur,m]};})}
+                          style={{...bSt(sel?C.accent:"transparent",sel?C.accent:C.border,sel?C.accentText:C.inkMid),padding:"4px 12px",fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+                          <Avatar name={m} size={14} members={members}/>{m}
+                        </button>
+                      );})}
+                    </div>
+                  }
+                </div>
+              </Field>
+              {/* 上傳圖片 */}
+              <NewTaskImageUpload images={newTask.images||[]} onUpload={async(file)=>{
+                const result=await uploadImage(file);
+                if(result.success){setNewTask(prev=>({...prev,images:[...(prev.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}]}));}
+              }} onDelete={async(fileId,i)=>{
+                setNewTask(prev=>({...prev,images:(prev.images||[]).filter((_,idx)=>idx!==i)}));
+                await deleteImage(fileId);
+              }}/>
               <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
-                <button onClick={()=>addTask(proj.id)} style={bSt(C.accent,C.accent,C.accentText)}>確認新增</button>
-                <button onClick={()=>setShowAdd(false)} style={bSt()}>取消</button>
+                <button type="button" onClick={()=>addTask(proj.id)} style={bSt(C.accent,C.accent,C.accentText)}>確認新增</button>
+                <button type="button" onClick={()=>setShowAdd(false)} style={bSt()}>取消</button>
               </div>
             </div>)}
 
@@ -932,7 +1141,7 @@ export default function App(){
         </div>)}
 
         {/* ══ 新增專案 ══ */}
-        {view==="new"&&(<div style={{maxWidth:540,opacity:mounted?1:0,transition:"opacity 0.3s"}}>
+        {view==="new"&&(<div style={{maxWidth:540,margin:"0 auto",opacity:mounted?1:0,transition:"opacity 0.3s"}}>
           <div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.22em",marginBottom:20}}>NEW PROJECT</div>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <Field label="專案名稱"><input placeholder="例：山居案" value={newProj.name} onChange={e=>setNewProj({...newProj,name:e.target.value})} style={iSt()}/></Field>
@@ -1163,11 +1372,11 @@ function TaskList({tasks,proj,members,editTask,confirmDel,setEditTask,setConfirm
               <button onClick={()=>{setEditTask(t.id);setConfirmDel(null);}} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:13,padding:"2px 3px",flexShrink:0}}>✎</button>
               {confirmDel===t.id?<button onClick={()=>delTask(proj.id,t.id)} style={{background:"none",border:"none",color:C.warn,cursor:"pointer",fontSize:10,padding:"2px 3px",flexShrink:0}}>確認刪除</button>:<button onClick={()=>setConfirmDel(t.id)} style={{background:"none",border:"none",color:C.border,cursor:"pointer",fontSize:15,padding:"2px 3px",flexShrink:0}}>×</button>}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,paddingLeft:22}}>
-              <Avatar name={t.owner} size={14} members={members}/>
-              <span style={{fontSize:11,color:C.inkSoft}}>{SHORT(t.owner)}</span>
+            <div style={{display:"flex",alignItems:"center",gap:8,paddingLeft:22,flexWrap:"wrap"}}>
+              {(t.owners||[]).map((o,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:3}}><Avatar name={o} size={14} members={members}/><span style={{fontSize:11,color:C.inkSoft}}>{SHORT(o)}</span></div>))}
               {t.due&&<><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:11,color:overdue?C.warn:C.inkSoft,flexShrink:0}}>{fmt(t.due)}{overdue?" ▲":""}</span></>}
               {t.note&&<><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:11,color:C.inkFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.note}</span></>}
+              {(t.images||[]).length>0&&<span style={{fontSize:10,color:C.inkFaint}}>· 📷 {t.images.length}</span>}
               {subTotal>0&&<span style={{fontSize:10,color:C.inkFaint,marginLeft:"auto"}}>子任務 {subDone}/{subTotal}</span>}
             </div>
           </div>
