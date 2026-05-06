@@ -29,6 +29,7 @@ function rowsToTasks(rows){
     category:r[7]||"設計",
     subtasks:r[8]?(() => { try { const p=JSON.parse(r[8]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
     updatedAt:r[9]||"",
+    images:r[10]?(() => { try { const p=JSON.parse(r[10]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
   }));
 }
 function rowsToRepairs(rows){
@@ -45,8 +46,8 @@ function projectsToRows(projects){
   return[h,...projects.map(p=>[p.id,p.name,p.type,p.status,p.client||"",p.start,p.end,(p.members||[]).join(","),p.archived?"TRUE":"FALSE",p.clientDetail||"",JSON.stringify(p.milestones||{}),p.template||""])];
 }
 function tasksToRows(projects){
-  const h=["id","projectId","name","owner","due","done","note","category","subtasks","updatedAt"];
-  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,t.owner,t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[]),t.updatedAt||""]))];
+  const h=["id","projectId","name","owner","due","done","note","category","subtasks","updatedAt","images"];
+  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,t.owner,t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"閮剛?",JSON.stringify(t.subtasks||[]),t.updatedAt||"",JSON.stringify(t.images||[])]))];
 }
 function repairsToRows(projects){
   const h=["id","projectId","desc","status","note","assignedDate","owner"];
@@ -121,6 +122,36 @@ function SavingBadge({saving,error,syncing}){
 function bSt(bg,bd,color){bg=bg||C.bgSunk;bd=bd||C.border;color=color||C.inkMid;return{background:bg,border:`1px solid ${bd}`,color,padding:"6px 14px",borderRadius:4,cursor:"pointer",fontSize:12,letterSpacing:"0.04em",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif"};}
 function iSt(extra){return{background:C.bgHover,border:`1px solid ${C.border}`,color:C.ink,padding:"8px 10px",borderRadius:4,fontSize:12,outline:"none",width:"100%",boxSizing:"border-box",minHeight:42,WebkitAppearance:"none",appearance:"none",fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif",...extra};}
 function sSt(extra){return{background:C.bgHover,border:`1px solid ${C.border}`,color:C.ink,padding:"8px 10px",borderRadius:4,fontSize:12,outline:"none",width:"100%",boxSizing:"border-box",minHeight:42,fontFamily:"'微軟正黑體','Microsoft JhengHei',sans-serif",...extra};}
+function parseOwners(owner){return Array.isArray(owner)?owner.filter(Boolean):(owner||"").split(",").map(s=>s.trim()).filter(Boolean);}
+function ownerText(owner){const names=parseOwners(owner);return names.length?names.join("\u3001"):"\u672a\u6307\u6d3e";}
+function ownersValue(names){return (names||[]).filter(Boolean).join(",");}
+function OwnerAvatars({owner,size=14,members}){
+  const names=parseOwners(owner);
+  if(!names.length)return <Avatar name="" size={size} members={members}/>;
+  return(<span style={{display:"inline-flex",alignItems:"center",gap:3}}>{names.map(n=><Avatar key={n} name={n} size={size} members={members}/>)}</span>);
+}
+function MemberMultiSelect({value,onChange,members}){
+  const selected=parseOwners(value);
+  function toggleMember(m){
+    const next=selected.includes(m)?selected.filter(x=>x!==m):[...selected,m];
+    onChange(ownersValue(next));
+  }
+  return(<div style={{display:"flex",flexWrap:"wrap",gap:6,background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:4,padding:6,minHeight:42,boxSizing:"border-box"}}>{members.map(m=>{const sel=selected.includes(m);return(<button key={m} type="button" onClick={()=>toggleMember(m)} style={{...bSt(sel?C.accent:"transparent",sel?C.accent:C.border,sel?C.accentText:C.inkMid),padding:"4px 9px",fontSize:11,display:"flex",alignItems:"center",gap:5}}><Avatar name={m} size={13} members={members}/>{m}</button>);})}</div>);
+}
+function readImageFiles(files,onDone){
+  const imgs=Array.from(files||[]).filter(f=>f.type&&f.type.startsWith("image/"));
+  if(!imgs.length)return;
+  Promise.all(imgs.map(file=>new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve({id:Date.now()+Math.random(),name:file.name,data:reader.result});reader.readAsDataURL(file);}))).then(onDone);
+}
+function ImageStrip({images,onRemove}){
+  const list=images||[];
+  if(!list.length)return null;
+  return(<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>{list.map(img=><div key={img.id||img.data} style={{position:"relative",width:54,height:54,border:`1px solid ${C.border}`,borderRadius:4,overflow:"hidden",background:C.bgSunk}}><img src={img.data} alt={img.name||"task image"} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>{onRemove&&<button type="button" onClick={()=>onRemove(img.id)} style={{position:"absolute",top:1,right:1,width:17,height:17,border:"none",borderRadius:2,background:"rgba(0,0,0,0.55)",color:"#fff",fontSize:11,cursor:"pointer",lineHeight:"17px",padding:0}}>x</button>}</div>)}</div>);
+}
+function ImagePicker({images,onChange,label="\u52a0\u5165\u5716\u7247"}){
+  const inputRef=useRef(null);
+  return(<div><ImageStrip images={images} onRemove={id=>onChange((images||[]).filter(img=>img.id!==id))}/><input ref={inputRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>readImageFiles(e.target.files,imgs=>{onChange([...(images||[]),...imgs]);e.target.value="";})}/><button type="button" onClick={()=>inputRef.current&&inputRef.current.click()} style={{...bSt(),padding:"5px 10px",fontSize:11,marginTop:(images||[]).length?6:0}}>{label}</button></div>);
+}
 
 // ─── GanttChart ───────────────────────────────────────────────
 function GanttChart({projects,members}){
@@ -143,7 +174,7 @@ function ProjectGantt({project,members}){
   const td=Math.max((mx-mn)/86400000,1),ms=monthList(mn,mx),today=new Date();
   const tp=Math.max(0,Math.min(100,(today-mn)/86400000/td*100));
   const pOf=d=>Math.max(0,Math.min(100,(new Date(d)-mn)/86400000/td*100));
-  return(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,overflow:"auto"}}><div style={{minWidth:460}}><div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}><div style={{width:160,flexShrink:0,borderRight:`1px solid ${C.border}`,padding:"9px 14px",fontSize:10,color:C.inkSoft}}>任務</div><div style={{flex:1,display:"flex",position:"relative"}}>{ms.map((m,i)=><div key={i} style={{flex:1,padding:"9px 0 9px 5px",fontSize:10,color:C.inkSoft,borderRight:`1px solid ${C.borderLight}`}}>{m.getMonth()+1}月</div>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.5}}/></div></div>{tasks.map((t,i)=>{const ov=!t.done&&new Date(t.due)<today;const dp=pOf(t.due);return(<div key={t.id} style={{display:"flex",alignItems:"center",minHeight:36,borderBottom:i<tasks.length-1?`1px solid ${C.borderLight}`:"none"}}><div style={{width:160,flexShrink:0,padding:"5px 14px",borderRight:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:6}}><div style={{width:12,height:12,border:`1px solid ${t.done?C.ok:C.border}`,borderRadius:2,background:t.done?C.ok:"transparent",flexShrink:0}}/><span style={{fontSize:11,color:t.done?C.inkFaint:C.inkMid,textDecoration:t.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span></div><div style={{flex:1,position:"relative",height:36,display:"flex",alignItems:"center"}}>{ms.map((_,mi)=><div key={mi} style={{position:"absolute",top:0,bottom:0,left:`${mi/ms.length*100}%`,width:1,background:C.borderLight,opacity:0.4}}/>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.3}}/><div title={`期限：${t.due}`} style={{position:"absolute",left:`calc(${dp}% - 5px)`,width:10,height:10,borderRadius:"50%",zIndex:1,background:t.done?C.ok:ov?C.warn:C.inkSoft,border:`1px solid ${t.done?C.ok:ov?C.warn:C.border}`}}/><div style={{position:"absolute",left:`calc(${dp}% + 10px)`}}><Avatar name={t.owner} size={15} members={members}/></div></div></div>);})} </div></div>);
+  return(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,overflow:"auto"}}><div style={{minWidth:460}}><div style={{display:"flex",borderBottom:`1px solid ${C.border}`}}><div style={{width:160,flexShrink:0,borderRight:`1px solid ${C.border}`,padding:"9px 14px",fontSize:10,color:C.inkSoft}}>任務</div><div style={{flex:1,display:"flex",position:"relative"}}>{ms.map((m,i)=><div key={i} style={{flex:1,padding:"9px 0 9px 5px",fontSize:10,color:C.inkSoft,borderRight:`1px solid ${C.borderLight}`}}>{m.getMonth()+1}月</div>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.5}}/></div></div>{tasks.map((t,i)=>{const ov=!t.done&&new Date(t.due)<today;const dp=pOf(t.due);return(<div key={t.id} style={{display:"flex",alignItems:"center",minHeight:36,borderBottom:i<tasks.length-1?`1px solid ${C.borderLight}`:"none"}}><div style={{width:160,flexShrink:0,padding:"5px 14px",borderRight:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:6}}><div style={{width:12,height:12,border:`1px solid ${t.done?C.ok:C.border}`,borderRadius:2,background:t.done?C.ok:"transparent",flexShrink:0}}/><span style={{fontSize:11,color:t.done?C.inkFaint:C.inkMid,textDecoration:t.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span></div><div style={{flex:1,position:"relative",height:36,display:"flex",alignItems:"center"}}>{ms.map((_,mi)=><div key={mi} style={{position:"absolute",top:0,bottom:0,left:`${mi/ms.length*100}%`,width:1,background:C.borderLight,opacity:0.4}}/>)}<div style={{position:"absolute",top:0,bottom:0,left:`${tp}%`,width:1,background:C.today,opacity:0.3}}/><div title={`期限：${t.due}`} style={{position:"absolute",left:`calc(${dp}% - 5px)`,width:10,height:10,borderRadius:"50%",zIndex:1,background:t.done?C.ok:ov?C.warn:C.inkSoft,border:`1px solid ${t.done?C.ok:ov?C.warn:C.border}`}}/><div style={{position:"absolute",left:`calc(${dp}% + 10px)`}}><OwnerAvatars owner={t.owner} size={15} members={members}/></div></div></div>);})} </div></div>);
 }
 
 // ─── MilestonePanel ───────────────────────────────────────────
@@ -214,7 +245,7 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
 
   function addSub(){
     if(!newSub.trim())return;
-    const subtasks=[...(task.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false}];
+    const subtasks=[...(task.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false,images:[]}];
     onUpdate({...task,subtasks});setNewSub("");
   }
   function toggleSub(id){
@@ -235,16 +266,25 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
     onUpdate({...task,subtasks});
     setEditSubId(null);setEditSubName("");
   }
+  function updateTaskImages(images){
+    onUpdate({...task,images});
+  }
+  function updateSubImages(id,images){
+    const subtasks=(task.subtasks||[]).map(s=>s.id===id?{...s,images}:s);
+    onUpdate({...task,subtasks});
+  }
 
   return(
     <Modal title={task.name} onClose={onClose}>
       <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-        <div style={{fontSize:11,color:C.inkSoft}}>負責：{task.owner}</div>
+        <div style={{fontSize:11,color:C.inkSoft}}>{"\u8ca0\u8cac\uff1a"}{ownerText(task.owner)}</div>
         {task.due&&<div style={{fontSize:11,color:C.inkSoft}}>期限：{fmt(task.due)}</div>}
         <div style={{fontSize:11,color:C.inkSoft}}>類別：{task.category}</div>
         {task.note&&<div style={{fontSize:11,color:C.inkFaint}}>備註：{task.note}</div>}
       </div>
-      <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>子任務</div>
+      <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>{ "\u4efb\u52d9\u5716\u7247" }</div>
+      <ImagePicker images={task.images||[]} onChange={updateTaskImages}/>
+      <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",margin:"14px 0 8px"}}>{ "\u5b50\u4efb\u52d9" }</div>
       <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:12}}>
         {[...(task.subtasks||[]).filter(s=>!s.done),...(task.subtasks||[]).filter(s=>s.done)].map(s=>(
           <div key={s.id}
@@ -261,13 +301,14 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
               ?<input value={editSubName} onChange={e=>setEditSubName(e.target.value)}
                   onKeyDown={e=>{if(e.key==="Enter")saveEditSub(s.id);if(e.key==="Escape"){setEditSubId(null);}}}
                   style={{...iSt({flex:1,padding:"3px 7px",fontSize:12})}} autoFocus/>
-              :<span style={{flex:1,fontSize:12,color:s.done?C.inkFaint:C.ink,textDecoration:s.done?"line-through":"none"}}>{s.name}</span>
+              :<div style={{flex:1}}><span style={{fontSize:12,color:s.done?C.inkFaint:C.ink,textDecoration:s.done?"line-through":"none"}}>{s.name}</span><ImageStrip images={s.images||[]} /></div>
             }
             {editSubId===s.id
               ?<><button onClick={()=>saveEditSub(s.id)} style={{background:"none",border:"none",color:C.ok,cursor:"pointer",fontSize:13}}>✓</button>
                 <button onClick={()=>setEditSubId(null)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>✕</button></>
               :<><button onClick={()=>startEditSub(s)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:12,padding:"2px 3px"}}>✎</button>
-                <button onClick={()=>delSub(s.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>×</button></>
+                <ImagePicker images={s.images||[]} onChange={images=>updateSubImages(s.id,images)} label={"\u5716\u7247"}/>
+                <button onClick={()=>delSub(s.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:14}}>x</button></>
             }
           </div>
         ))}
@@ -356,11 +397,11 @@ function MemberPanel({members,onClose,onSave}){
 
 function OverdueModal({projects,onClose}){
   const items=projects.flatMap(p=>p.tasks.filter(t=>t.due&&!t.done&&t.due<new Date().toISOString().slice(0,10)).map(t=>({proj:p.name,projId:p.id,task:t.name,owner:t.owner,due:t.due})));
-  return(<Modal title={`逾期任務（${items.length}）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前沒有逾期任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500}}>{it.task}</span><span style={{fontSize:10,color:C.warn}}>逾期 {Math.abs(daysLeft(it.due))} 天</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{it.owner}</span><span>{fmt(it.due)}</span></div></div>))}</div>}</Modal>);
+  return(<Modal title={`逾期任務（${items.length}）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前沒有逾期任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500}}>{it.task}</span><span style={{fontSize:10,color:C.warn}}>逾期 {Math.abs(daysLeft(it.due))} 天</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{ownerText(it.owner)}</span><span>{fmt(it.due)}</span></div></div>))}</div>}</Modal>);
 }
 function PaymentModal({projects,onClose}){
   const items=projects.flatMap(p=>p.tasks.filter(t=>isPayment(t.name)).map(t=>({proj:p.name,projId:p.id,task:t.name,owner:t.owner,due:t.due,done:t.done})));
-  return(<Modal title={`工程請款（${items.filter(i=>!i.done).length} 待處理）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無請款任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${it.done?C.borderLight:C.border}`,borderRadius:5,opacity:it.done?0.55:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500,textDecoration:it.done?"line-through":"none"}}>{it.task}</span><span style={{fontSize:10,color:it.done?C.ok:it.due&&daysLeft(it.due)<0?C.warn:C.inkSoft}}>{it.done?"已完成":it.due?daysLeft(it.due)<0?`逾期 ${Math.abs(daysLeft(it.due))}天`:`剩 ${daysLeft(it.due)}天`:""}</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{it.owner}</span>{it.due&&<span>{fmt(it.due)}</span>}</div></div>))}</div>}</Modal>);
+  return(<Modal title={`工程請款（${items.filter(i=>!i.done).length} 待處理）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無請款任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${it.done?C.borderLight:C.border}`,borderRadius:5,opacity:it.done?0.55:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500,textDecoration:it.done?"line-through":"none"}}>{it.task}</span><span style={{fontSize:10,color:it.done?C.ok:it.due&&daysLeft(it.due)<0?C.warn:C.inkSoft}}>{it.done?"已完成":it.due?daysLeft(it.due)<0?`逾期 ${Math.abs(daysLeft(it.due))}天`:`剩 ${daysLeft(it.due)}天`:""}</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{ownerText(it.owner)}</span>{it.due&&<span>{fmt(it.due)}</span>}</div></div>))}</div>}</Modal>);
 }
 function RepairModal({projects,customRepairs,onClose,onUpdate}){
   const projectItems=projects.flatMap(p=>(p.repairs||[]).map(r=>({...r,proj:p.name,projId:p.id})));
@@ -371,8 +412,8 @@ function RepairModal({projects,customRepairs,onClose,onUpdate}){
 
 // ─── EditTaskRow ──────────────────────────────────────────────
 function EditTaskRow({task,onSave,onCancel,members}){
-  const[f,setF]=useState({name:task.name,owner:task.owner,due:task.due||"",note:task.note||"",category:task.category||"設計"});
-  return(<div style={{padding:"10px 13px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:5,display:"flex",flexDirection:"column",gap:8}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><Field label="任務名稱"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} style={iSt()}/></Field><Field label="負責人"><select value={f.owner} onChange={e=>setF({...f,owner:e.target.value})} style={sSt()}>{members.map(m=><option key={m}>{m}</option>)}</select></Field><Field label="期限（選填）"><input type="date" value={f.due} onChange={e=>setF({...f,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field><Field label="類別"><select value={f.category} onChange={e=>setF({...f,category:e.target.value})} style={sSt()}>{TASK_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="備註"><input value={f.note} onChange={e=>setF({...f,note:e.target.value})} placeholder="選填" style={iSt()}/></Field></div><div style={{display:"flex",gap:6,justifyContent:"flex-end"}}><button onClick={()=>onSave(f)} style={{...bSt(C.accent,C.accent,C.accentText),padding:"5px 14px",fontSize:11}}>儲存</button><button onClick={onCancel} style={{...bSt(),padding:"5px 14px",fontSize:11}}>取消</button></div></div>);
+  const[f,setF]=useState({name:task.name,owner:task.owner,due:task.due||"",note:task.note||"",category:task.category||"閮剛?",images:task.images||[]});
+  return(<div style={{padding:"10px 13px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:5,display:"flex",flexDirection:"column",gap:8}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><Field label="任務名稱"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} style={iSt()}/></Field><Field label={"\u8ca0\u8cac\u4eba"}><MemberMultiSelect value={f.owner} onChange={owner=>setF({...f,owner})} members={members}/></Field><Field label="期限（選填）"><input type="date" value={f.due} onChange={e=>setF({...f,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field><Field label="類別"><select value={f.category} onChange={e=>setF({...f,category:e.target.value})} style={sSt()}>{TASK_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="備註"><input value={f.note} onChange={e=>setF({...f,note:e.target.value})} placeholder="選填" style={iSt()}/></Field></div><Field label={"\u4efb\u52d9\u5716\u7247"}><ImagePicker images={f.images||[]} onChange={images=>setF({...f,images})}/></Field><div style={{display:"flex",gap:6,justifyContent:"flex-end"}}><button onClick={()=>onSave(f)} style={{...bSt(C.accent,C.accent,C.accentText),padding:"5px 14px",fontSize:11}}>儲存</button><button onClick={onCancel} style={{...bSt(),padding:"5px 14px",fontSize:11}}>取消</button></div></div>);
 }
 
 // ─── 主元件 ──────────────────────────────────────────────────
@@ -392,7 +433,7 @@ export default function App(){
   const[showAdd,setShowAdd]=useState(false);
   const[editTask,setEditTask]=useState(null);
   const[taskDetail,setTaskDetail]=useState(null);
-  const[newTask,setNewTask]=useState({name:"",owner:"",due:"",note:"",category:"設計"}); // owner 在 members 載入後由 useEffect 補上
+  const[newTask,setNewTask]=useState({name:"",owner:"",due:"",note:"",category:"閮剛?",images:[]}); // owner 在 members 載入後由 useEffect 補上
   const[newProj,setNewProj]=useState({name:"",type:"室內",client:"",clientDetail:"",start:"",end:"",members:[]});
   const[customId,setCustomId]=useState("");
   const[editingId,setEditingId]=useState(false);
@@ -620,7 +661,7 @@ export default function App(){
     if(!newTask.name)return;
     const now=new Date().toISOString();
     const next=projects.map(p=>p.id===pid?{...p,tasks:[...p.tasks,{id:Date.now(),...newTask,done:false,subtasks:[],updatedAt:now}]}:p);
-    updateProjects(next);setNewTask({name:"",owner:members[0]||"",due:"",note:"",category:"設計"});setShowAdd(false);
+    updateProjects(next);setNewTask({name:"",owner:members[0]||"",due:"",note:"",category:"閮剛?",images:[]});setShowAdd(false);
   }
 
   function toggle(pid,tid){const now=new Date().toISOString();updateProjects(projects.map(p=>p.id===pid?{...p,tasks:p.tasks.map(t=>t.id===tid?{...t,done:!t.done,updatedAt:now}:t)}:p));}
@@ -673,7 +714,7 @@ export default function App(){
   }
   function applyTemplate(tpl){
     if(!proj)return;
-    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[],updatedAt:new Date().toISOString()}));
+    const newTasks=tpl.tasks.map((t,i)=>({id:Date.now()+i,projectId:proj.id,name:t.name,owner:members[0]||"",due:"",done:false,note:t.note||"",category:t.category||"設計",subtasks:[],images:[],updatedAt:new Date().toISOString()}));
     updateProjects(projects.map(p=>p.id===proj.id?{...p,tasks:[...p.tasks,...newTasks]}:p));
     setShowTemplate(false);
   }
@@ -725,7 +766,7 @@ export default function App(){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
             {/* 本地版本 */}
             <div style={{background:C.bgSunk,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 14px"}}>
-              <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>你的版本</div>
+              <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>本地版本</div>
               {[["任務名稱",conflict.local.name],["負責人",conflict.local.owner],["期限",conflict.local.due||"—"],["備註",conflict.local.note||"—"],["狀態",conflict.local.done?"完成":"進行中"]].map(([l,v])=>(
                 <div key={l} style={{marginBottom:5}}>
                   <span style={{fontSize:10,color:C.inkFaint}}>{l}：</span>
@@ -891,10 +932,10 @@ export default function App(){
             {showAdd&&(<div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                 <Field label="任務名稱"><input placeholder="輸入任務名稱" value={newTask.name} onChange={e=>setNewTask({...newTask,name:e.target.value})} style={iSt()}/></Field>
-                <Field label="負責人"><select value={newTask.owner||members[0]} onChange={e=>setNewTask({...newTask,owner:e.target.value})} style={sSt()}>{members.map(m=><option key={m}>{m}</option>)}</select></Field>
+                <Field label={"\u8ca0\u8cac\u4eba"}><MemberMultiSelect value={newTask.owner} onChange={owner=>setNewTask({...newTask,owner})} members={members}/></Field>
                 <Field label="期限（選填）"><input type="date" value={newTask.due} onChange={e=>setNewTask({...newTask,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field>
                 <Field label="類別"><select value={newTask.category} onChange={e=>setNewTask({...newTask,category:e.target.value})} style={sSt()}>{TASK_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field>
-                <Field label="備註"><input placeholder="選填" value={newTask.note} onChange={e=>setNewTask({...newTask,note:e.target.value})} style={iSt()}/></Field>
+                <Field label="?酉"><input placeholder="?詨‵" value={newTask.note} onChange={e=>setNewTask({...newTask,note:e.target.value})} style={iSt()}/></Field><Field label={"\u4efb\u52d9\u5716\u7247"}><ImagePicker images={newTask.images||[]} onChange={images=>setNewTask({...newTask,images})}/></Field>
               </div>
               <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
                 <button onClick={()=>addTask(proj.id)} style={bSt(C.accent,C.accent,C.accentText)}>確認新增</button>
@@ -1164,10 +1205,10 @@ function TaskList({tasks,proj,members,editTask,confirmDel,setEditTask,setConfirm
               {confirmDel===t.id?<button onClick={()=>delTask(proj.id,t.id)} style={{background:"none",border:"none",color:C.warn,cursor:"pointer",fontSize:10,padding:"2px 3px",flexShrink:0}}>確認刪除</button>:<button onClick={()=>setConfirmDel(t.id)} style={{background:"none",border:"none",color:C.border,cursor:"pointer",fontSize:15,padding:"2px 3px",flexShrink:0}}>×</button>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,paddingLeft:22}}>
-              <Avatar name={t.owner} size={14} members={members}/>
-              <span style={{fontSize:11,color:C.inkSoft}}>{SHORT(t.owner)}</span>
+              <OwnerAvatars owner={t.owner} size={14} members={members}/>
+              <span style={{fontSize:11,color:C.inkSoft}}>{ownerText(t.owner)}</span>
               {t.due&&<><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:11,color:overdue?C.warn:C.inkSoft,flexShrink:0}}>{fmt(t.due)}{overdue?" ▲":""}</span></>}
-              {t.note&&<><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:11,color:C.inkFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.note}</span></>}
+              {t.note&&<><span style={{fontSize:10,color:C.inkFaint}}>繚</span><span style={{fontSize:11,color:C.inkFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.note}</span></>}{(t.images||[]).length>0&&<span style={{fontSize:10,color:C.inkFaint}}>{ "\u5716\u7247" } {(t.images||[]).length}</span>}
               {subTotal>0&&<span style={{fontSize:10,color:C.inkFaint,marginLeft:"auto"}}>子任務 {subDone}/{subTotal}</span>}
             </div>
           </div>
