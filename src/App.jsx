@@ -52,14 +52,20 @@ function rowsToProjects(pRows,tRows,rRows){
   }));
 }
 function rowsToTasks(rows){
+  // 自動偵測欄位格式：第一列是 header
+  const header=rows[0]||[];
+  const ownerIdx=header.findIndex(h=>h==="owners"||h==="owner"); // 相容新舊格式
+  const imagesIdx=header.findIndex(h=>h==="images");
+
   return rows.slice(1).filter(r=>r[0]).map(r=>({
     id:Number(r[0]), projectId:r[1]||"", name:r[2]||"",
-    owners:r[3]?r[3].split(",").map(s=>s.trim()).filter(Boolean):[],
+    // 相容：owner 舊格式（單一字串）或 owners 新格式（逗號分隔）
+    owners:r[ownerIdx>=0?ownerIdx:3]?r[ownerIdx>=0?ownerIdx:3].split(",").map(s=>s.trim()).filter(Boolean):[],
     due:sliceDate(r[4]), done:r[5]==="TRUE"||r[5]===true, note:r[6]||"",
     category:r[7]||"設計",
     subtasks:r[8]?(() => { try { const p=JSON.parse(r[8]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
     updatedAt:r[9]||"",
-    images:r[10]?(() => { try { const p=JSON.parse(r[10]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
+    images:imagesIdx>=0&&r[imagesIdx]?(() => { try { const p=JSON.parse(r[imagesIdx]); return Array.isArray(p)?p:[]; } catch(e){ return []; } })():[],
   }));
 }
 function rowsToRepairs(rows){
@@ -77,7 +83,7 @@ function projectsToRows(projects){
 }
 function tasksToRows(projects){
   const h=["id","projectId","name","owners","due","done","note","category","subtasks","updatedAt","images"];
-  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,(t.owners||[]).join(","),t.due,t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[]),t.updatedAt||"",JSON.stringify(t.images||[])]))];
+  return[h,...projects.flatMap(p=>p.tasks.map(t=>[t.id,p.id,t.name,(t.owners||[]).join(","),t.due||"",t.done?"TRUE":"FALSE",t.note||"",t.category||"設計",JSON.stringify(t.subtasks||[]),t.updatedAt||"",JSON.stringify(t.images||[])]))];
 }
 function repairsToRows(projects){
   const h=["id","projectId","desc","status","note","assignedDate","owner"];
@@ -334,15 +340,27 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
   }
 
   // 任務圖片上傳
+  const[uploadError,setUploadError]=useState("");
   async function handleUploadImage(file){
     setUploading(true);
+    setUploadError("");
     try{
+      // 檢查檔案大小（限制 10MB）
+      if(file.size>10*1024*1024){
+        setUploadError("檔案過大，請選擇 10MB 以下的圖片");
+        return;
+      }
       const result=await uploadImage(file);
       if(result.success){
         const images=[...(task.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}];
         onUpdate({...task,images});
+      }else{
+        setUploadError("上傳失敗：請確認 Apps Script 已重新部署");
       }
-    }catch(e){console.error(e);}
+    }catch(e){
+      console.error(e);
+      setUploadError("上傳失敗："+e.message);
+    }
     finally{setUploading(false);}
   }
 
@@ -385,6 +403,7 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
 
       {/* 圖片區塊 */}
       <ImageSection images={task.images||[]} onUpload={handleUploadImage} onDelete={handleDeleteImage} uploading={uploading}/>
+      {uploadError&&<div style={{fontSize:11,color:C.warn,marginBottom:8,padding:"6px 10px",background:C.warn+"22",borderRadius:4}}>{uploadError}</div>}
 
       {/* 子任務 */}
       <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>子任務</div>
