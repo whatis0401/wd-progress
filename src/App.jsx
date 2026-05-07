@@ -24,11 +24,16 @@ async function uploadImage(file){
 }
 
 async function deleteImage(fileId){
-  await fetch(GAS_URL,{
-    method:"POST",
-    headers:{"Content-Type":"text/plain"},
-    body:JSON.stringify({action:"deleteImage",fileId})
-  });
+  try{
+    await fetch(GAS_URL,{
+      method:"POST",
+      headers:{"Content-Type":"text/plain"},
+      body:JSON.stringify({action:"deleteImage",fileId})
+    });
+  }catch(e){
+    // 即使 Drive 刪除失敗，也不影響資料庫記錄移除
+    console.warn("Drive delete failed:",e);
+  }
 }
 
 async function sheetGet(s){const r=await fetch(`${GAS_URL}?sheet=${encodeURIComponent(s)}`);if(!r.ok)throw new Error(r.status);return r.json();}
@@ -107,7 +112,7 @@ function buildColors(hex){
   return{bg:hsl(hDeg,Math.max(sl-10,5),Math.min(ll2+8,88)),bgSunk:hsl(hDeg,Math.max(sl-12,5),Math.max(ll2-5,30)),bgRaised:hsl(hDeg,Math.max(sl-8,5),Math.min(ll2+14,92)),bgHover:hsl(hDeg,Math.max(sl-6,5),Math.min(ll2+18,95)),border:hsl(hDeg,Math.max(sl-15,5),Math.max(ll2-12,30)),borderLight:hsl(hDeg,Math.max(sl-12,5),Math.max(ll2-4,40)),ink:hsl(hDeg,Math.min(sl+10,40),Math.max(ll2-55,8)),inkMid:hsl(hDeg,Math.min(sl+5,30),Math.max(ll2-42,18)),inkSoft:hsl(hDeg,Math.max(sl-5,10),Math.max(ll2-28,30)),inkFaint:hsl(hDeg,Math.max(sl-10,5),Math.max(ll2-18,40)),accent:hsl(hDeg,Math.min(sl+15,55),Math.max(ll2-40,12)),accentMid:hsl(hDeg,Math.min(sl+10,45),Math.max(ll2-28,22)),accentText:hsl(hDeg,Math.max(sl-15,5),Math.min(ll2+30,88)),ok:hsl(140,40,Math.max(ll2-35,18)),warn:hsl(20,55,Math.max(ll2-30,25)),today:hsl(30,45,Math.max(ll2-32,20))};
 }
 const DEFAULT_HEX="#BDC0BA";
-let C=buildColors(DEFAULT_HEX);
+let C=buildColors((()=>{try{return localStorage.getItem("wd_colorHex")||DEFAULT_HEX;}catch(e){return DEFAULT_HEX;}})());
 
 // ─── 常數 ─────────────────────────────────────────────────────
 const STATUS_LIST=["規劃中","進行中","暫停","完成"];
@@ -595,7 +600,7 @@ function EditTaskRow({task,onSave,onCancel,members}){
 
 // ─── 主元件 ──────────────────────────────────────────────────
 export default function App(){
-  const[colorHex,setColorHex]=useState(DEFAULT_HEX);
+  const[colorHex,setColorHex]=useState(()=>{try{return localStorage.getItem("wd_colorHex")||DEFAULT_HEX;}catch(e){return DEFAULT_HEX;}});
   const[members,setMembers]=useState([]);
   const[projects,setProjects]=useState([]);
   const[templates,setTemplates]=useState([]);
@@ -665,7 +670,16 @@ export default function App(){
       setMembers(rowsToMembers(mR));
       setTemplates(rowsToTemplates(tmR));
       const remoteCR=crR.slice(1).filter(r=>r[0]).map(r=>({id:Number(r[0]),desc:r[1]||'',status:r[2]||'待安排',note:r[3]||'',assignedDate:r[4]||'',owner:r[5]||'',customProjectName:r[6]||''}));
-      if(!mergeWithLocal)setCustomRepairs(remoteCR);
+      if(!mergeWithLocal){
+        setCustomRepairs(remoteCR);
+      }else{
+        // 合併模式：以本地為主，補上遠端新增的
+        setCustomRepairs(prev=>{
+          const localIds=new Set(prev.map(r=>r.id));
+          const remoteOnly=remoteCR.filter(r=>!localIds.has(r.id));
+          return[...prev,...remoteOnly];
+        });
+      }
 
       if(mergeWithLocal){
         // 合併：保留本地比遠端新的任務，也保留本地新建的專案
@@ -767,7 +781,7 @@ export default function App(){
   const proj=selected?projects.find(p=>p.id===selected):null;
 
   function updateProjects(next){setProjects(next);scheduleSave(next,null,null);}
-  function applyColor(hex){C=buildColors(hex);setColorHex(hex);setModal(null);}
+  function applyColor(hex){C=buildColors(hex);setColorHex(hex);try{localStorage.setItem("wd_colorHex",hex);}catch(e){}setModal(null);}
   function saveMembers(list){setMembers(list);scheduleSave(null,list,null);setModal(null);}
   function updateRepair(pid,rid,status){updateProjects(projects.map(p=>p.id===pid?{...p,repairs:(p.repairs||[]).map(r=>r.id===rid?{...r,status}:r)}:p));}
 
@@ -897,7 +911,7 @@ export default function App(){
     updateProjects(projects.map(p=>p.id===proj.id?{...p,tasks:[...p.tasks,...newTasks]}:p));
     setShowTemplate(false);
   }
-  function goBack(){setView("overview");setSelected(null);setShowAdd(false);setEditTask(null);setConfirmDel(null);setTaskDetail(null);setShowEditInfo(false);setShowTemplate(false);setDetailTab("tasks");setTaskCatFilter("全部");setShowAddRepair(false);setCollapsedCats({});}
+  function goBack(){setView("overview");setSelected(null);setShowAdd(false);setEditTask(null);setConfirmDel(null);setTaskDetail(null);setShowEditInfo(false);setShowTemplate(false);setDetailTab("tasks");setTaskCatFilter("全部");setShowAddRepair(false);setCollapsedCats({});setConfirmDeleteProject(null);}
   function toggleCat(cat){setCollapsedCats(c=>({...c,[cat]:!c[cat]}));}
 
   const activeProjects=projects.filter(p=>!p.archived);
@@ -1033,7 +1047,7 @@ export default function App(){
           </div>
           <TabBar tabs={[["list","清單"],["gantt","甘特圖"],["repairs","修繕管理"]]} active={oTab} onChange={setOTab}/>
           {oTab==="list"&&(<div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
-            {activeProjects.map((p,i)=>{const pc=pct(p.tasks);const days=daysLeft(p.end);return(<div key={p.id} onClick={()=>{setSelected(p.id);setView("detail");setDetailTab("tasks");}} style={{padding:"13px 14px",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,0.06)",opacity:mounted?1:0,transform:mounted?"none":"translateY(5px)",transition:`opacity 0.4s ${i*0.06}s, transform 0.4s ${i*0.06}s, background 0.15s`}} onMouseEnter={e=>e.currentTarget.style.background=C.bgHover} onMouseLeave={e=>e.currentTarget.style.background=C.bgRaised}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:20,height:20,borderRadius:3,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.accentText,flexShrink:0}}>{typeTag(p.type)}</span><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{p.id}</span><span style={{fontSize:13,color:C.ink,fontWeight:500,flex:1}}>{p.name}</span><StatusBadge status={p.status}/></div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><div style={{flex:1,height:3,background:C.bgSunk,borderRadius:2}}><div style={{width:`${pc}%`,height:"100%",background:pc===100?C.ok:C.accentMid,borderRadius:2,transition:"width 0.7s"}}/></div><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{pc}%</span><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:10,color:C.inkSoft,flexShrink:0}}>{fmt(p.end)}</span><span style={{fontSize:10,color:days<0?C.warn:days<30?"#7A6A30":C.inkFaint,flexShrink:0}}>{days<0?`逾 ${Math.abs(days)}天`:`剩 ${days}天`}</span></div>{p.members&&p.members.length>0&&(<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.inkFaint,marginRight:2}}>負責</span>{p.members.map((m,mi)=>(<div key={mi} style={{display:"flex",alignItems:"center",gap:3}}><Avatar name={m} size={15} members={members}/><span style={{fontSize:10,color:C.inkSoft}}>{SHORT(m)}</span></div>))}</div>)}</div>);})}
+            {activeProjects.map((p,i)=>{const pc=pct(p.tasks);const days=daysLeft(p.end);return(<div key={p.id} onClick={()=>{setSelected(p.id);setView("detail");setDetailTab("tasks");setTaskDetail(null);setEditTask(null);setConfirmDel(null);}} style={{padding:"13px 14px",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,0.06)",opacity:mounted?1:0,transform:mounted?"none":"translateY(5px)",transition:`opacity 0.4s ${i*0.06}s, transform 0.4s ${i*0.06}s, background 0.15s`}} onMouseEnter={e=>e.currentTarget.style.background=C.bgHover} onMouseLeave={e=>e.currentTarget.style.background=C.bgRaised}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:20,height:20,borderRadius:3,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.accentText,flexShrink:0}}>{typeTag(p.type)}</span><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{p.id}</span><span style={{fontSize:13,color:C.ink,fontWeight:500,flex:1}}>{p.name}</span><StatusBadge status={p.status}/></div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><div style={{flex:1,height:3,background:C.bgSunk,borderRadius:2}}><div style={{width:`${pc}%`,height:"100%",background:pc===100?C.ok:C.accentMid,borderRadius:2,transition:"width 0.7s"}}/></div><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{pc}%</span><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:10,color:C.inkSoft,flexShrink:0}}>{fmt(p.end)}</span><span style={{fontSize:10,color:days<0?C.warn:days<30?"#7A6A30":C.inkFaint,flexShrink:0}}>{days<0?`逾 ${Math.abs(days)}天`:`剩 ${days}天`}</span></div>{p.members&&p.members.length>0&&(<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.inkFaint,marginRight:2}}>負責</span>{p.members.map((m,mi)=>(<div key={mi} style={{display:"flex",alignItems:"center",gap:3}}><Avatar name={m} size={15} members={members}/><span style={{fontSize:10,color:C.inkSoft}}>{SHORT(m)}</span></div>))}</div>)}</div>);})}
           </div>)}
           {oTab==="gantt"&&<div style={{marginTop:4}}><GanttChart projects={activeProjects} members={members}/></div>}
 
@@ -1298,9 +1312,9 @@ function RepairTab({
       {!sorted.length&&<div style={{padding:"32px",textAlign:"center",color:C.inkFaint,fontSize:12}}>尚無修繕記錄</div>}
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {active.length>0&&<div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:2}}>進行中（{active.length}）</div>}
-        {active.map(r=><RepairCard key={`${r.projId}-${r.id}`} r={r} projects={projects} members={members} isEditing={editRepairId===`${r.projId}-${r.id}`} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(`${r.projId}-${r.id}`);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
+        {active.map(r=><RepairCard key={`${r.projId}-${r.id}`} r={r} projects={projects} members={members} isEditing={editRepairId===`${r.projId}-${r.id}`} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(`${r.projId}-${r.id}`);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});setConfirmRepairId(null);}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
         {done.length>0&&<div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.12em",marginTop:8,marginBottom:2}}>已完成（{done.length}）</div>}
-        {done.map(r=><RepairCard key={`${r.projId}-${r.id}`} r={r} projects={projects} members={members} isEditing={editRepairId===`${r.projId}-${r.id}`} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(`${r.projId}-${r.id}`);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
+        {done.map(r=><RepairCard key={`${r.projId}-${r.id}`} r={r} projects={projects} members={members} isEditing={editRepairId===`${r.projId}-${r.id}`} editData={editRepairData} setEditData={setEditRepairData} onStartEdit={()=>{setEditRepairId(`${r.projId}-${r.id}`);setEditRepairData({projectId:r.projId,desc:r.desc,note:r.note||"",assignedDate:r.assignedDate||"",owner:r.owner||"",status:r.status});setConfirmRepairId(null);}} onSave={()=>handleSaveEdit(r)} onCancel={()=>{setEditRepairId(null);setEditRepairData(null);}} onStatusChange={s=>onUpdate(r.projId,r.id,{status:s})} onDelete={()=>onDelete(r.projId,r.id)} confirmId={confirmRepairId} setConfirmId={setConfirmRepairId}/>)}
       </div>
     </div>
   );
