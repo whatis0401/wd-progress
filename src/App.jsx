@@ -639,6 +639,7 @@ export default function App(){
   const[showTemplate,setShowTemplate]=useState(false);
   const[newRepairGlobal,setNewRepairGlobal]=useState({projectId:"",customProjectName:"",desc:"",note:"",assignedDate:"",owner:""});
   const[customRepairs,setCustomRepairs]=useState([]); // 手動輸入的修繕記錄（存入 Sheets CustomRepairs）
+  const[adminTasks,setAdminTasks]=useState([]); // 公司行政任務（存入 Sheets AdminTasks）
   const[showAddRepairGlobal,setShowAddRepairGlobal]=useState(false);
   const[editRepairId,setEditRepairId]=useState(null);
   const[editRepairData,setEditRepairData]=useState(null);
@@ -665,12 +666,21 @@ export default function App(){
     if(!mergeWithLocal&&!silent)setLoading(true);
     if(silent)setSyncing(true);
     try{
-      const[pR,tR,rR,mR,tmR,crR]=await Promise.all([sheetGet("Projects"),sheetGet("Tasks"),sheetGet("Repairs"),sheetGet("Members"),sheetGet("Templates").catch(()=>[["name","tasks"]]),sheetGet("CustomRepairs").catch(()=>[["id","desc","status","note","assignedDate","owner","customProjectName"]])]);
+      const[pR,tR,rR,mR,tmR,crR,atR]=await Promise.all([sheetGet("Projects"),sheetGet("Tasks"),sheetGet("Repairs"),sheetGet("Members"),sheetGet("Templates").catch(()=>[["name","tasks"]]),sheetGet("CustomRepairs").catch(()=>[["id","desc","status","note","assignedDate","owner","customProjectName"]]),sheetGet("AdminTasks").catch(()=>[["id","name","owners","due","done","note","updatedAt"]])]);
       const remoteProjects=rowsToProjects(pR,tR,rR);
       setMembers(rowsToMembers(mR));
       setTemplates(rowsToTemplates(tmR));
       const remoteCR=crR.slice(1).filter(r=>r[0]).map(r=>({id:Number(r[0]),desc:r[1]||'',status:r[2]||'待安排',note:r[3]||'',assignedDate:r[4]||'',owner:r[5]||'',customProjectName:r[6]||''}));
+      // 解析 AdminTasks
+      const remoteAT=atR.slice(1).filter(r=>r[0]).map(r=>({
+        id:Number(r[0]),name:r[1]||"",
+        owners:r[2]?r[2].split(",").map(s=>s.trim()).filter(Boolean):[],
+        due:sliceDate(r[3]),done:r[4]==="TRUE"||r[4]===true,
+        note:r[5]||"",updatedAt:r[6]||"",
+      }));
+
       if(!mergeWithLocal){
+        setAdminTasks(remoteAT);
         setCustomRepairs(remoteCR);
       }else{
         // 合併模式：以本地為主，補上遠端新增的
@@ -678,6 +688,18 @@ export default function App(){
           const localIds=new Set(prev.map(r=>r.id));
           const remoteOnly=remoteCR.filter(r=>!localIds.has(r.id));
           return[...prev,...remoteOnly];
+        });
+        setAdminTasks(prev=>{
+          const localIds=new Set(prev.map(t=>t.id));
+          const remoteOnly=remoteAT.filter(t=>!localIds.has(t.id));
+          // 合併：以 updatedAt 較新的為主
+          const merged=prev.map(localT=>{
+            const remoteT=remoteAT.find(t=>t.id===localT.id);
+            if(!remoteT)return localT;
+            if(remoteT.updatedAt>localT.updatedAt)return remoteT;
+            return localT;
+          });
+          return[...merged,...remoteOnly];
         });
       }
 
@@ -711,8 +733,8 @@ export default function App(){
     finally{setLoading(false);setSyncing(false);}
   }
 
-  const latestState=useRef({projects,members,templates,customRepairs});
-  useEffect(()=>{latestState.current={projects,members,templates,customRepairs};},[projects,members,templates,customRepairs]);
+  const latestState=useRef({projects,members,templates,customRepairs,adminTasks});
+  useEffect(()=>{latestState.current={projects,members,templates,customRepairs,adminTasks};},[projects,members,templates,customRepairs,adminTasks]);
 
   const scheduleSave=useCallback((ps,ms,tms)=>{
     if(saveTimer.current)clearTimeout(saveTimer.current);
@@ -784,6 +806,42 @@ export default function App(){
   function applyColor(hex){C=buildColors(hex);setColorHex(hex);try{localStorage.setItem("wd_colorHex",hex);}catch(e){}setModal(null);}
   function saveMembers(list){setMembers(list);scheduleSave(null,list,null);setModal(null);}
   function updateRepair(pid,rid,status){updateProjects(projects.map(p=>p.id===pid?{...p,repairs:(p.repairs||[]).map(r=>r.id===rid?{...r,status}:r)}:p));}
+
+  // ── 行政任務管理 ──
+  function addAdminTask(task){
+    const now=new Date().toISOString();
+    const newTask={id:Date.now(),name:task.name,owners:task.owners||[],due:task.due||"",done:false,note:task.note||"",updatedAt:now};
+    const next=[...adminTasks,newTask];
+    setAdminTasks(next);
+    scheduleAdminSave(next);
+  }
+  function toggleAdminTask(id){
+    const next=adminTasks.map(t=>t.id===id?{...t,done:!t.done,updatedAt:new Date().toISOString()}:t);
+    setAdminTasks(next);
+    scheduleAdminSave(next);
+  }
+  function updateAdminTask(id,updates){
+    const next=adminTasks.map(t=>t.id===id?{...t,...updates,updatedAt:new Date().toISOString()}:t);
+    setAdminTasks(next);
+    scheduleAdminSave(next);
+  }
+  function deleteAdminTask(id){
+    const next=adminTasks.filter(t=>t.id!==id);
+    setAdminTasks(next);
+    scheduleAdminSave(next);
+  }
+  const adminSaveTimer=useRef(null);
+  function scheduleAdminSave(tasks){
+    if(adminSaveTimer.current)clearTimeout(adminSaveTimer.current);
+    adminSaveTimer.current=setTimeout(async()=>{
+      try{
+        const h=["id","name","owners","due","done","note","updatedAt"];
+        const rows=[h,...tasks.map(t=>[t.id,t.name,(t.owners||[]).join(","),t.due||"",t.done?"TRUE":"FALSE",t.note||"",t.updatedAt||""])];
+        await sheetPut("AdminTasks",rows);
+      }catch(e){console.error("AdminTasks save error:",e);}
+      finally{adminSaveTimer.current=null;}
+    },800);
+  }
 
   // ── 全域修繕管理 ──
   function moveGlobalRepair(oldPid,rid,newData){
@@ -924,6 +982,7 @@ export default function App(){
     ...(customRepairs||[]).map(r=>({...r,projId:"__custom__"}))
   ];
   const repairT=allRepairsForBadge.filter(r=>r.status!=="已完成").length;
+  const adminT=adminTasks.filter(t=>!t.done).length;
   const payT=activeProjects.reduce((a,p)=>a+p.tasks.filter(t=>isPayment(t.name)&&!t.done).length,0);
   const totalT=activeProjects.reduce((a,p)=>a+p.tasks.length,0);
   const doneT=activeProjects.reduce((a,p)=>a+p.tasks.filter(t=>t.done).length,0);
@@ -1042,16 +1101,25 @@ export default function App(){
 
         {/* ══ 總表 ══ */}
         {view==="overview"&&(<div style={{opacity:mounted?1:0,transition:"opacity 0.5s"}}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:20}}>
-            {[{label:"進行中",value:activeProjects.filter(p=>p.status==="進行中").length,sub:"個專案",click:null},{label:"任務完成",value:`${doneT}／${totalT}`,sub:"",click:null},{label:"逾期任務",value:overdueT,sub:"個",warn:overdueT>0,click:()=>setModal("overdue")},{label:"修繕進行",value:repairT,sub:"項",warn:repairT>0,click:()=>{setOTab("repairs");}},{label:"待請款",value:payT,sub:"筆",warn:payT>0,click:()=>setModal("payment")}].map(s=>(<div key={s.label} onClick={s.click||undefined} style={{background:C.bgRaised,border:`1px solid ${s.warn?"#A07060":C.border}`,borderRadius:6,padding:"12px 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.08)",cursor:s.click?"pointer":"default",transition:"background 0.15s"}} onMouseEnter={e=>{if(s.click)e.currentTarget.style.background=C.bgHover;}} onMouseLeave={e=>{if(s.click)e.currentTarget.style.background=C.bgRaised;}}><div style={{fontSize:22,fontWeight:300,color:s.warn?C.warn:C.ink,letterSpacing:"-0.02em"}}>{s.value}</div><div style={{fontSize:9,color:C.inkFaint,marginTop:3,letterSpacing:"0.1em"}}>{s.label}{s.sub?` ${s.sub}`:""}</div>{s.click&&<div style={{fontSize:9,color:C.inkFaint,marginTop:2}}>點擊查看 →</div>}</div>))}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:20}}>
+            {[{label:"進行中",value:activeProjects.filter(p=>p.status==="進行中").length,sub:"個專案",click:null},{label:"任務完成",value:`${doneT}／${totalT}`,sub:"",click:null},{label:"逾期任務",value:overdueT,sub:"個",warn:overdueT>0,click:()=>setModal("overdue")},{label:"修繕進行",value:repairT,sub:"項",warn:repairT>0,click:()=>{setOTab("repairs");}},{label:"行政待辦",value:adminT,sub:"項",warn:adminT>0,click:()=>setOTab("admin")},{label:"待請款",value:payT,sub:"筆",warn:payT>0,click:()=>setModal("payment")}].map(s=>(<div key={s.label} onClick={s.click||undefined} style={{background:C.bgRaised,border:`1px solid ${s.warn?"#A07060":C.border}`,borderRadius:6,padding:"12px 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.08)",cursor:s.click?"pointer":"default",transition:"background 0.15s"}} onMouseEnter={e=>{if(s.click)e.currentTarget.style.background=C.bgHover;}} onMouseLeave={e=>{if(s.click)e.currentTarget.style.background=C.bgRaised;}}><div style={{fontSize:22,fontWeight:300,color:s.warn?C.warn:C.ink,letterSpacing:"-0.02em"}}>{s.value}</div><div style={{fontSize:9,color:C.inkFaint,marginTop:3,letterSpacing:"0.1em"}}>{s.label}{s.sub?` ${s.sub}`:""}</div>{s.click&&<div style={{fontSize:9,color:C.inkFaint,marginTop:2}}>點擊查看 →</div>}</div>))}
           </div>
-          <TabBar tabs={[["list","清單"],["gantt","甘特圖"],["repairs","修繕管理"]]} active={oTab} onChange={setOTab}/>
+          <TabBar tabs={[["list","清單"],["gantt","甘特圖"],["repairs","修繕管理"],["admin","行政任務"]]} active={oTab} onChange={setOTab}/>
           {oTab==="list"&&(<div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
             {activeProjects.map((p,i)=>{const pc=pct(p.tasks);const days=daysLeft(p.end);return(<div key={p.id} onClick={()=>{setSelected(p.id);setView("detail");setDetailTab("tasks");setTaskDetail(null);setEditTask(null);setConfirmDel(null);}} style={{padding:"13px 14px",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,0.06)",opacity:mounted?1:0,transform:mounted?"none":"translateY(5px)",transition:`opacity 0.4s ${i*0.06}s, transform 0.4s ${i*0.06}s, background 0.15s`}} onMouseEnter={e=>e.currentTarget.style.background=C.bgHover} onMouseLeave={e=>e.currentTarget.style.background=C.bgRaised}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{width:20,height:20,borderRadius:3,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:C.accentText,flexShrink:0}}>{typeTag(p.type)}</span><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{p.id}</span><span style={{fontSize:13,color:C.ink,fontWeight:500,flex:1}}>{p.name}</span><StatusBadge status={p.status}/></div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><div style={{flex:1,height:3,background:C.bgSunk,borderRadius:2}}><div style={{width:`${pc}%`,height:"100%",background:pc===100?C.ok:C.accentMid,borderRadius:2,transition:"width 0.7s"}}/></div><span style={{fontSize:10,color:C.inkFaint,flexShrink:0}}>{pc}%</span><span style={{fontSize:10,color:C.inkFaint}}>·</span><span style={{fontSize:10,color:C.inkSoft,flexShrink:0}}>{fmt(p.end)}</span><span style={{fontSize:10,color:days<0?C.warn:days<30?"#7A6A30":C.inkFaint,flexShrink:0}}>{days<0?`逾 ${Math.abs(days)}天`:`剩 ${days}天`}</span></div>{p.members&&p.members.length>0&&(<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:9,color:C.inkFaint,marginRight:2}}>負責</span>{p.members.map((m,mi)=>(<div key={mi} style={{display:"flex",alignItems:"center",gap:3}}><Avatar name={m} size={15} members={members}/><span style={{fontSize:10,color:C.inkSoft}}>{SHORT(m)}</span></div>))}</div>)}</div>);})}
           </div>)}
           {oTab==="gantt"&&<div style={{marginTop:4}}><GanttChart projects={activeProjects} members={members}/></div>}
 
           {/* ══ 修繕管理 Tab ══ */}
+          {oTab==="admin"&&(<AdminTaskTab
+            tasks={adminTasks}
+            members={members}
+            onAdd={addAdminTask}
+            onToggle={toggleAdminTask}
+            onUpdate={updateAdminTask}
+            onDelete={deleteAdminTask}
+          />)}
+
           {oTab==="repairs"&&(<RepairTab
             projects={[...activeProjects,...archivedProjects]}
             customRepairs={customRepairs}
@@ -1220,6 +1288,137 @@ export default function App(){
         <span>何為設計有限公司 · whatis Design</span>
         <span>工作進度追蹤系統 v0.6{saving?" · 儲存中…":""}</span>
       </footer>
+    </div>
+  );
+}
+
+// ─── AdminTaskTab 元件 ───────────────────────────────────────
+function AdminTaskTab({tasks,members,onAdd,onToggle,onUpdate,onDelete}){
+  const[showAdd,setShowAdd]=useState(false);
+  const[newTask,setNewTask]=useState({name:"",owners:[],due:"",note:""});
+  const[editId,setEditId]=useState(null);
+  const[editData,setEditData]=useState(null);
+  const[confirmId,setConfirmId]=useState(null);
+  const today=new Date().toISOString().slice(0,10);
+  const active=[...tasks.filter(t=>!t.done).sort((a,b)=>{if(!a.due)return 1;if(!b.due)return -1;return a.due.localeCompare(b.due);})];
+  const done=tasks.filter(t=>t.done);
+
+  function handleAdd(){
+    if(!newTask.name.trim())return;
+    onAdd(newTask);
+    setNewTask({name:"",owners:[],due:"",note:""});
+    setShowAdd(false);
+  }
+
+  return(
+    <div style={{marginTop:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <span style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em"}}>公司行政任務（不計入專案）</span>
+        <button type="button" onClick={()=>setShowAdd(!showAdd)} style={bSt(C.accent,C.accent,C.accentText)}>＋ 新增</button>
+      </div>
+
+      {/* 新增表單 */}
+      {showAdd&&(
+        <div style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <Field label="任務名稱"><input placeholder="輸入任務名稱" value={newTask.name} onChange={e=>setNewTask({...newTask,name:e.target.value})} style={iSt()} onKeyDown={e=>{if(e.key==="Enter")handleAdd();}}/></Field>
+            <Field label="期限（選填）"><input type="date" value={newTask.due} onChange={e=>setNewTask({...newTask,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field>
+            <Field label="備註"><input placeholder="選填" value={newTask.note} onChange={e=>setNewTask({...newTask,note:e.target.value})} style={iSt()}/></Field>
+          </div>
+          <Field label="負責人（可多選）">
+            <div style={{padding:"8px 10px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:4,minHeight:42,marginBottom:8}}>
+              {members.length===0
+                ?<span style={{fontSize:11,color:C.inkFaint}}>載入中…</span>
+                :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {members.map(m=>{const sel=(newTask.owners||[]).includes(m);return(
+                    <button type="button" key={m}
+                      onClick={()=>setNewTask(prev=>{const cur=prev.owners||[];return{...prev,owners:sel?cur.filter(x=>x!==m):[...cur,m]};})}
+                      style={{...bSt(sel?C.accent:"transparent",sel?C.accent:C.border,sel?C.accentText:C.inkMid),padding:"4px 12px",fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+                      <Avatar name={m} size={14} members={members}/>{m}
+                    </button>
+                  );})}
+                </div>
+              }
+            </div>
+          </Field>
+          <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+            <button type="button" onClick={handleAdd} style={bSt(C.accent,C.accent,C.accentText)}>確認新增</button>
+            <button type="button" onClick={()=>setShowAdd(false)} style={bSt()}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {/* 任務列表 */}
+      {!tasks.length&&<div style={{padding:"32px",textAlign:"center",color:C.inkFaint,fontSize:12}}>尚無行政任務</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {active.length>0&&<div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:2}}>待辦（{active.length}）</div>}
+        {active.map(t=>{
+          const overdue=t.due&&t.due<today;
+          if(editId===t.id&&editData){
+            return(
+              <div key={t.id} style={{background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 14px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <Field label="任務名稱"><input value={editData.name} onChange={e=>setEditData({...editData,name:e.target.value})} style={iSt()}/></Field>
+                  <Field label="期限"><input type="date" value={editData.due||""} onChange={e=>setEditData({...editData,due:e.target.value})} style={{...iSt(),minHeight:40,WebkitAppearance:"none"}}/></Field>
+                  <Field label="備註"><input value={editData.note||""} onChange={e=>setEditData({...editData,note:e.target.value})} style={iSt()}/></Field>
+                </div>
+                <Field label="負責人">
+                  <div style={{padding:"8px 10px",background:C.bgHover,border:`1px solid ${C.border}`,borderRadius:4,minHeight:42,marginBottom:8}}>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {members.map(m=>{const sel=(editData.owners||[]).includes(m);return(
+                        <button type="button" key={m}
+                          onClick={()=>setEditData(prev=>{const cur=prev.owners||[];return{...prev,owners:sel?cur.filter(x=>x!==m):[...cur,m]};})}
+                          style={{...bSt(sel?C.accent:"transparent",sel?C.accent:C.border,sel?C.accentText:C.inkMid),padding:"4px 12px",fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+                          <Avatar name={m} size={14} members={members}/>{m}
+                        </button>
+                      );})}
+                    </div>
+                  </div>
+                </Field>
+                <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                  <button type="button" onClick={()=>{onUpdate(t.id,editData);setEditId(null);setEditData(null);}} style={bSt(C.accent,C.accent,C.accentText)}>儲存</button>
+                  <button type="button" onClick={()=>{setEditId(null);setEditData(null);}} style={bSt()}>取消</button>
+                </div>
+              </div>
+            );
+          }
+          return(
+            <div key={t.id} style={{background:C.bgRaised,border:`1px solid ${overdue?C.warn:C.border}`,borderRadius:6,padding:"11px 14px",boxShadow:"0 1px 2px rgba(0,0,0,0.05)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                <div onClick={()=>onToggle(t.id)} style={{width:15,height:15,border:`1.5px solid ${C.border}`,borderRadius:3,cursor:"pointer",background:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:9,color:C.inkFaint,opacity:0}}>✓</span>
+                </div>
+                <span style={{flex:1,fontSize:13,color:C.ink,fontWeight:500}}>{t.name}</span>
+                {overdue&&<span style={{fontSize:10,color:C.warn}}>⚠ 逾期</span>}
+                <button type="button" onClick={()=>{setEditId(t.id);setEditData({name:t.name,owners:t.owners||[],due:t.due||"",note:t.note||""});setConfirmId(null);}} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:13,padding:"2px 3px"}}>✎</button>
+                {confirmId===t.id
+                  ?<><button type="button" onClick={()=>{onDelete(t.id);setConfirmId(null);}} style={{background:"none",border:"none",color:C.warn,cursor:"pointer",fontSize:10,padding:"2px 3px"}}>確認</button>
+                    <button type="button" onClick={()=>setConfirmId(null)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:12,padding:"2px 3px"}}>✕</button></>
+                  :<button type="button" onClick={()=>setConfirmId(t.id)} style={{background:"none",border:"none",color:C.inkFaint,cursor:"pointer",fontSize:15,padding:"2px 3px"}}>×</button>
+                }
+              </div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",paddingLeft:23}}>
+                {(t.owners||[]).map((o,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:3}}><Avatar name={o} size={13} members={members}/><span style={{fontSize:11,color:C.inkSoft}}>{SHORT(o)}</span></div>))}
+                {t.due&&<span style={{fontSize:11,color:overdue?C.warn:C.inkSoft}}>{fmt(t.due)}</span>}
+                {t.note&&<span style={{fontSize:11,color:C.inkFaint}}>· {t.note}</span>}
+              </div>
+            </div>
+          );
+        })}
+
+        {done.length>0&&<div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.12em",marginTop:8,marginBottom:2}}>已完成（{done.length}）</div>}
+        {done.map(t=>(
+          <div key={t.id} style={{background:C.bgRaised,border:`1px solid ${C.borderLight}`,borderRadius:6,padding:"10px 14px",opacity:0.5}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div onClick={()=>onToggle(t.id)} style={{width:15,height:15,border:`1.5px solid ${C.ok}`,borderRadius:3,cursor:"pointer",background:C.ok,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{fontSize:9,color:"#e8e8e8"}}>✓</span>
+              </div>
+              <span style={{flex:1,fontSize:13,color:C.inkFaint,textDecoration:"line-through"}}>{t.name}</span>
+              <button type="button" onClick={()=>{if(confirmId===t.id){onDelete(t.id);setConfirmId(null);}else setConfirmId(t.id);}} style={{background:"none",border:"none",color:confirmId===t.id?C.warn:C.inkFaint,cursor:"pointer",fontSize:confirmId===t.id?10:15,padding:"2px 3px"}}>{confirmId===t.id?"確認刪除":"×"}</button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
