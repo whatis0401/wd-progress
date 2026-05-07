@@ -256,7 +256,10 @@ function NewTaskImageUpload({images,onUpload,onDelete}){
         <input ref={inputRef} type="file" accept="image/*" multiple style={{display:"none"}}
           onChange={async e=>{
             setUploading(true);
-            for(const f of Array.from(e.target.files))await onUpload(f);
+            for(const f of Array.from(e.target.files)){
+              if(f.size>10*1024*1024){alert(`「${f.name}」超過 10MB，已略過`);continue;}
+              await onUpload(f);
+            }
             setUploading(false);
             e.target.value="";
           }}/>
@@ -308,6 +311,10 @@ function ImageSection({images,onUpload,onDelete,uploading}){
 }
 
 function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
+  // 用內部 state 同步顯示，確保上傳後立即更新
+  const[internalTask,setInternalTask]=useState(task);
+  useEffect(()=>{setInternalTask(task);},[task]);
+  const liveTask=internalTask;
   const[newSub,setNewSub]=useState("");
   const[editSubId,setEditSubId]=useState(null);
   const[editSubName,setEditSubName]=useState("");
@@ -320,22 +327,22 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
 
   function addSub(){
     if(!newSub.trim())return;
-    const subtasks=[...(task.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false,images:[]}];
-    onUpdate({...task,subtasks});setNewSub("");
+    const subtasks=[...(liveTask.subtasks||[]),{id:Date.now(),name:newSub.trim(),done:false,images:[]}];
+    const updated={...liveTask,subtasks};setInternalTask(updated);onUpdate(updated);setNewSub("");
   }
   function toggleSub(id){
-    const subtasks=(task.subtasks||[]).map(s=>s.id===id?{...s,done:!s.done}:s);
-    onUpdate({...task,subtasks});
+    const subtasks=(liveTask.subtasks||[]).map(s=>s.id===id?{...s,done:!s.done}:s);
+    const updated={...liveTask,subtasks};setInternalTask(updated);onUpdate(updated);
   }
   function delSub(id){
-    const subtasks=(task.subtasks||[]).filter(s=>s.id!==id);
-    onUpdate({...task,subtasks});
+    const subtasks=(liveTask.subtasks||[]).filter(s=>s.id!==id);
+    const updated={...liveTask,subtasks};setInternalTask(updated);onUpdate(updated);
   }
   function startEditSub(s){setEditSubId(s.id);setEditSubName(s.name);}
   function saveEditSub(id){
     if(!editSubName.trim())return;
-    const subtasks=(task.subtasks||[]).map(s=>s.id===id?{...s,name:editSubName.trim()}:s);
-    onUpdate({...task,subtasks});
+    const subtasks=(liveTask.subtasks||[]).map(s=>s.id===id?{...s,name:editSubName.trim()}:s);
+    const updated={...liveTask,subtasks};setInternalTask(updated);onUpdate(updated);
     setEditSubId(null);setEditSubName("");
   }
 
@@ -345,15 +352,16 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
     setUploading(true);
     setUploadError("");
     try{
-      // 檢查檔案大小（限制 10MB）
       if(file.size>10*1024*1024){
         setUploadError("檔案過大，請選擇 10MB 以下的圖片");
         return;
       }
       const result=await uploadImage(file);
       if(result.success){
-        const images=[...(task.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}];
-        onUpdate({...task,images});
+        const newImage={fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName};
+        const updated={...liveTask,images:[...(liveTask.images||[]),newImage]};
+        setInternalTask(updated);
+        onUpdate(updated);
       }else{
         setUploadError("上傳失敗：請確認 Apps Script 已重新部署");
       }
@@ -366,8 +374,10 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
 
   // 任務圖片刪除
   async function handleDeleteImage(fileId,idx){
-    const images=(task.images||[]).filter((_,i)=>i!==idx);
-    onUpdate({...task,images});
+    const images=(liveTask.images||[]).filter((_,i)=>i!==idx);
+    const updated={...liveTask,images};
+    setInternalTask(updated);
+    onUpdate(updated);
     await deleteImage(fileId);
   }
 
@@ -377,8 +387,10 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
     try{
       const result=await uploadImage(file);
       if(result.success){
-        const subtasks=(task.subtasks||[]).map(s=>s.id===subId?{...s,images:[...(s.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}]}:s);
-        onUpdate({...task,subtasks});
+        const subtasks=(liveTask.subtasks||[]).map(s=>s.id===subId?{...s,images:[...(s.images||[]),{fileId:result.fileId,viewUrl:result.viewUrl,thumbUrl:result.thumbUrl,fileName:result.fileName}]}:s);
+        const updated={...liveTask,subtasks};
+        setInternalTask(updated);
+        onUpdate(updated);
       }
     }catch(e){console.error(e);}
     finally{setSubUploadingId(null);}
@@ -386,29 +398,31 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
 
   // 子任務圖片刪除
   async function handleDeleteSubImage(subId,fileId,idx){
-    const subtasks=(task.subtasks||[]).map(s=>s.id===subId?{...s,images:(s.images||[]).filter((_,i)=>i!==idx)}:s);
-    onUpdate({...task,subtasks});
+    const subtasks=(liveTask.subtasks||[]).map(s=>s.id===subId?{...s,images:(s.images||[]).filter((_,i)=>i!==idx)}:s);
+    const updated={...liveTask,subtasks};
+    setInternalTask(updated);
+    onUpdate(updated);
     await deleteImage(fileId);
   }
 
   return(
-    <Modal title={task.name} onClose={onClose} wide>
+    <Modal title={liveTask.name} onClose={onClose} wide>
       {/* 任務資訊 */}
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-        <div style={{fontSize:11,color:C.inkSoft}}>負責：{(task.owners||[]).join("、")||"未指派"}</div>
-        {task.due&&<div style={{fontSize:11,color:C.inkSoft}}>期限：{fmt(task.due)}</div>}
-        <div style={{fontSize:11,color:C.inkSoft}}>類別：{task.category}</div>
-        {task.note&&<div style={{fontSize:11,color:C.inkFaint}}>備註：{task.note}</div>}
+        <div style={{fontSize:11,color:C.inkSoft}}>負責：{(liveTask.owners||[]).join("、")||"未指派"}</div>
+        {liveTask.due&&<div style={{fontSize:11,color:C.inkSoft}}>期限：{fmt(liveTask.due)}</div>}
+        <div style={{fontSize:11,color:C.inkSoft}}>類別：{liveTask.category}</div>
+        {liveTask.note&&<div style={{fontSize:11,color:C.inkFaint}}>備註：{liveTask.note}</div>}
       </div>
 
       {/* 圖片區塊 */}
-      <ImageSection images={task.images||[]} onUpload={handleUploadImage} onDelete={handleDeleteImage} uploading={uploading}/>
+      <ImageSection images={liveTask.images||[]} onUpload={handleUploadImage} onDelete={handleDeleteImage} uploading={uploading}/>
       {uploadError&&<div style={{fontSize:11,color:C.warn,marginBottom:8,padding:"6px 10px",background:C.warn+"22",borderRadius:4}}>{uploadError}</div>}
 
       {/* 子任務 */}
       <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>子任務</div>
       <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:12}}>
-        {[...(task.subtasks||[]).filter(s=>!s.done),...(task.subtasks||[]).filter(s=>s.done)].map(s=>(
+        {[...(liveTask.subtasks||[]).filter(s=>!s.done),...(liveTask.subtasks||[]).filter(s=>s.done)].map(s=>(
           <div key={s.id}
             draggable
             onDragStart={()=>{subDragRef.current=s.id;setSubDraggingId(s.id);}}
@@ -443,7 +457,7 @@ function TaskDetailModal({task,onClose,onUpdate,members,onReorderSub}){
             )}
           </div>
         ))}
-        {(task.subtasks||[]).length===0&&<div style={{fontSize:11,color:C.inkFaint,textAlign:"center",padding:"12px"}}>尚無子任務</div>}
+        {(liveTask.subtasks||[]).length===0&&<div style={{fontSize:11,color:C.inkFaint,textAlign:"center",padding:"12px"}}>尚無子任務</div>}
       </div>
       <div style={{display:"flex",gap:8}}>
         <input value={newSub} onChange={e=>setNewSub(e.target.value)} placeholder="新增子任務" style={{...iSt(),flex:1}}
@@ -527,12 +541,12 @@ function MemberPanel({members,onClose,onSave}){
 }
 
 function OverdueModal({projects,onClose}){
-  const items=projects.flatMap(p=>p.tasks.filter(t=>t.due&&!t.done&&t.due<new Date().toISOString().slice(0,10)).map(t=>({proj:p.name,projId:p.id,task:t.name,owner:t.owner,due:t.due})));
-  return(<Modal title={`逾期任務（${items.length}）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前沒有逾期任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500}}>{it.task}</span><span style={{fontSize:10,color:C.warn}}>逾期 {Math.abs(daysLeft(it.due))} 天</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{it.owner}</span><span>{fmt(it.due)}</span></div></div>))}</div>}</Modal>);
+  const items=projects.flatMap(p=>p.tasks.filter(t=>t.due&&!t.done&&t.due<new Date().toISOString().slice(0,10)).map(t=>({proj:p.name,projId:p.id,task:t.name,owners:t.owners||[],due:t.due})));
+  return(<Modal title={`逾期任務（${items.length}）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前沒有逾期任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500}}>{it.task}</span><span style={{fontSize:10,color:C.warn}}>逾期 {Math.abs(daysLeft(it.due))} 天</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{(it.owners||[]).join("、")}</span><span>{fmt(it.due)}</span></div></div>))}</div>}</Modal>);
 }
 function PaymentModal({projects,onClose}){
-  const items=projects.flatMap(p=>p.tasks.filter(t=>isPayment(t.name)).map(t=>({proj:p.name,projId:p.id,task:t.name,owner:t.owner,due:t.due,done:t.done})));
-  return(<Modal title={`工程請款（${items.filter(i=>!i.done).length} 待處理）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無請款任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${it.done?C.borderLight:C.border}`,borderRadius:5,opacity:it.done?0.55:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500,textDecoration:it.done?"line-through":"none"}}>{it.task}</span><span style={{fontSize:10,color:it.done?C.ok:it.due&&daysLeft(it.due)<0?C.warn:C.inkSoft}}>{it.done?"已完成":it.due?daysLeft(it.due)<0?`逾期 ${Math.abs(daysLeft(it.due))}天`:`剩 ${daysLeft(it.due)}天`:""}</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{it.owner}</span>{it.due&&<span>{fmt(it.due)}</span>}</div></div>))}</div>}</Modal>);
+  const items=projects.flatMap(p=>p.tasks.filter(t=>isPayment(t.name)).map(t=>({proj:p.name,projId:p.id,task:t.name,owners:t.owners||[],due:t.due,done:t.done})));
+  return(<Modal title={`工程請款（${items.filter(i=>!i.done).length} 待處理）`} onClose={onClose}>{items.length===0?<div style={{color:C.inkFaint,fontSize:12,textAlign:"center",padding:"20px"}}>目前無請款任務</div>:<div style={{display:"flex",flexDirection:"column",gap:5}}>{items.map((it,i)=>(<div key={i} style={{padding:"10px 14px",background:C.bg,border:`1px solid ${it.done?C.borderLight:C.border}`,borderRadius:5,opacity:it.done?0.55:1}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:12,color:C.ink,fontWeight:500,textDecoration:it.done?"line-through":"none"}}>{it.task}</span><span style={{fontSize:10,color:it.done?C.ok:it.due&&daysLeft(it.due)<0?C.warn:C.inkSoft}}>{it.done?"已完成":it.due?daysLeft(it.due)<0?`逾期 ${Math.abs(daysLeft(it.due))}天`:`剩 ${daysLeft(it.due)}天`:""}</span></div><div style={{display:"flex",gap:10,fontSize:11,color:C.inkSoft,flexWrap:"wrap"}}><span>{it.projId}·{it.proj}</span><span>{(it.owners||[]).join("、")}</span>{it.due&&<span>{fmt(it.due)}</span>}</div></div>))}</div>}</Modal>);
 }
 function RepairModal({projects,customRepairs,onClose,onUpdate}){
   const projectItems=projects.flatMap(p=>(p.repairs||[]).map(r=>({...r,proj:p.name,projId:p.id})));
@@ -668,7 +682,8 @@ export default function App(){
             });
             const remoteIds=new Set(remoteP.tasks.map(t=>t.id));
             const localOnlyTasks=localP.tasks.filter(t=>!remoteIds.has(t.id));
-            return{...remoteP,tasks:[...mergedTasks,...localOnlyTasks]};
+            // 專案層級資料（milestones, status, client 等）以本地為主，避免覆蓋未存入的修改
+            return{...remoteP,...localP,tasks:[...mergedTasks,...localOnlyTasks]};
           });
           // 保留本地新建但遠端還沒有的專案（剛建立還沒存入 Sheets）
           const remoteProjectIds=new Set(remoteProjects.map(p=>p.id));
@@ -718,7 +733,8 @@ export default function App(){
             }
             return localT;
           });
-          return{...localP,tasks:mergedTasks};
+          // 專案層級以 localP 為主（包含 milestones, status 等本地修改）
+          return{...remoteP,...localP,tasks:mergedTasks};
         });
 
         // 保留遠端新增的專案
@@ -930,7 +946,7 @@ export default function App(){
             {/* 本地版本 */}
             <div style={{background:C.bgSunk,border:`1px solid ${C.border}`,borderRadius:6,padding:"12px 14px"}}>
               <div style={{fontSize:10,color:C.inkFaint,letterSpacing:"0.12em",marginBottom:8}}>你的版本</div>
-              {[["任務名稱",conflict.local.name],["負責人",conflict.local.owner],["期限",conflict.local.due||"—"],["備註",conflict.local.note||"—"],["狀態",conflict.local.done?"完成":"進行中"]].map(([l,v])=>(
+              {[["任務名稱",conflict.local.name],["負責人",(conflict.local.owners||[]).join("、")||"未指派"],["期限",conflict.local.due||"—"],["備註",conflict.local.note||"—"],["狀態",conflict.local.done?"完成":"進行中"]].map(([l,v])=>(
                 <div key={l} style={{marginBottom:5}}>
                   <span style={{fontSize:10,color:C.inkFaint}}>{l}：</span>
                   <span style={{fontSize:11,color:C.ink}}>{v}</span>
@@ -941,7 +957,7 @@ export default function App(){
             {/* 遠端版本 */}
             <div style={{background:C.bgSunk,border:`1px solid ${C.accent}`,borderRadius:6,padding:"12px 14px"}}>
               <div style={{fontSize:10,color:C.accent,letterSpacing:"0.12em",marginBottom:8}}>對方的版本</div>
-              {[["任務名稱",conflict.remote.name],["負責人",conflict.remote.owner],["期限",conflict.remote.due||"—"],["備註",conflict.remote.note||"—"],["狀態",conflict.remote.done?"完成":"進行中"]].map(([l,v])=>(
+              {[["任務名稱",conflict.remote.name],["負責人",(conflict.remote.owners||[]).join("、")||"未指派"],["期限",conflict.remote.due||"—"],["備註",conflict.remote.note||"—"],["狀態",conflict.remote.done?"完成":"進行中"]].map(([l,v])=>(
                 <div key={l} style={{marginBottom:5}}>
                   <span style={{fontSize:10,color:C.inkFaint}}>{l}：</span>
                   <span style={{fontSize:11,color:C.ink}}>{v}</span>
@@ -1176,7 +1192,7 @@ export default function App(){
               <div style={{fontSize:9,color:C.inkFaint,letterSpacing:"0.14em",marginBottom:6}}>案件編號</div>
               <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:C.bgRaised,border:`1px solid ${C.border}`,borderRadius:4}}>
                 <span style={{fontSize:11,color:C.inkSoft,flex:1}}>WD_{editingId?<input value={customId} onChange={e=>setCustomId(e.target.value)} style={{...iSt({display:"inline-block",width:100,padding:"2px 6px",fontSize:11,marginLeft:2})}}/>:<span style={{color:C.inkMid,fontWeight:500}}>{displayId}</span>}</span>
-                <button onClick={()=>{setEditingId(!editingId);if(!editingId)setCustomId(displayId);}} style={{...bSt(),padding:"4px 10px",fontSize:11}}>{editingId?"確認":"修改"}</button>
+                <button onClick={()=>{setEditingId(!editingId);if(!editingId)setCustomId(displayId);setDupIdError(false);}} style={{...bSt(),padding:"4px 10px",fontSize:11}}>{editingId?"確認":"修改"}</button>
               </div>
               <div style={{fontSize:10,color:C.inkFaint,marginTop:4}}>格式：類型_年度＋件號，例如 I_2603</div>
               {dupIdError&&<div style={{fontSize:11,color:C.warn,marginTop:4}}>此案件編號已存在，請修改</div>}
